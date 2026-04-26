@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+if ! command -v auditctl >/dev/null 2>&1; then
+  echo "auditctl post-merge hook: auditctl not found on PATH" >&2
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+export AUDITCTL_DB="${AUDITCTL_DB:-$repo_root/.auditctl/auditctl.db}"
+if [ -z "${AUDITCTL_ARTIFACTS_ROOT:-}" ]; then
+  if [ -d /projects/dev ]; then
+    export AUDITCTL_ARTIFACTS_ROOT="/projects/dev"
+  else
+    export AUDITCTL_ARTIFACTS_ROOT="$(dirname "$repo_root")"
+  fi
+fi
+
+sha="$(git rev-parse HEAD)"
+branch="$(git rev-parse --abbrev-ref HEAD)"
+actor="${USER:-git}"
+metadata="$(SHA="$sha" BRANCH="$branch" python3 -c \
+  'import json, os; print(json.dumps({"sha": os.environ["SHA"], "branch": os.environ["BRANCH"]}, separators=(",", ":")))')"
+
+auditctl add \
+  --type merge \
+  --source git-hook \
+  --actor "$actor" \
+  --summary "Merge landed at ${sha}" \
+  --ref "sha:${sha}" \
+  --metadata "$metadata" >/dev/null || \
+  echo "auditctl post-merge hook: audit emit failed" >&2
