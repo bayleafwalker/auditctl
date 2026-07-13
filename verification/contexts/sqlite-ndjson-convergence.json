@@ -5,7 +5,7 @@
   "subject": "audit-event",
   "contract_ref": {
     "doc_id": "auditctl.audit-write-and-rebuild",
-    "revision": "sha256:9598773307a0e91f824322683b35b993af8e569f5b12d37ffd0a334f188eb8d7"
+    "revision": "sha256:db3caf9a52a863093d2d062e6b64dd317e81fd9fc6516d921fe78a5839f41e3d"
   },
   "source_of_truth": "sqlite-index-plus-ndjson-recovery-shards",
   "depth": 2,

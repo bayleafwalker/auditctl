@@ -1,7 +1,7 @@
 ---
 doc_id: auditctl.audit-write-and-rebuild
 status: draft
-supersedes: []
+supersedes: null
 ---
 
 # Audit write and rebuild protocol
