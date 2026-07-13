@@ -1,0 +1,37 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "auditctl.event.sqlite-ndjson-convergence",
+  "owner_repo": "auditctl",
+  "subject": "audit-event",
+  "contract_ref": {
+    "doc_id": "auditctl.audit-write-and-rebuild",
+    "revision": "sha256:db3caf9a52a863093d2d062e6b64dd317e81fd9fc6516d921fe78a5839f41e3d"
+  },
+  "source_of_truth": "sqlite-index-plus-ndjson-recovery-shards",
+  "depth": 2,
+  "backends": ["sqlite", "filesystem-ndjson"],
+  "actors": ["publisher-a", "publisher-b", "rebuilder"],
+  "initial_state": ["event id absent from sqlite", "event id absent from shard"],
+  "operations": [
+    { "name": "add", "actors": ["publisher-a", "publisher-b"], "synchronization": "barrier-before-shard-lock" },
+    { "name": "rebuild", "actors": ["rebuilder"], "synchronization": "after-injected-crash" }
+  ],
+  "consistency": { "target": "projection-convergence", "object": "event-id-across-sqlite-and-ndjson" },
+  "assumptions": { "isolation": "sqlite-begin-immediate-plus-flock", "clock": "event-timestamp-provided-or-process-clock", "fairness": "none" },
+  "bounds": { "publishers": 8, "events": 64, "rebuilds": 2 },
+  "invariants": [
+    "successful-response-has-both-copies",
+    "reported-append-failure-has-no-committed-sqlite-row",
+    "completed-concurrent-appends-produce-complete-lines",
+    "rebuild-deduplicates-by-event-id"
+  ],
+  "faults": [
+    "append-error-before-fsync",
+    "crash-after-ndjson-fsync-before-sqlite-commit",
+    "sqlite-commit-error-after-append",
+    "partial-final-line"
+  ],
+  "oracles": ["event-id-set-comparison", "ndjson-parse", "sqlite-invariant-query", "rebuild-idempotency"],
+  "implementation_anchors": ["auditctl/cli.py:add_cmd", "auditctl/ndjson.py:append_event", "auditctl/cli.py:rebuild_cmd"],
+  "expansions": ["semantic-doc", "stateful-test", "concurrent-history", "fault-scenario"]
+}
