@@ -67,6 +67,54 @@ Auditctl rejects malformed refs or metadata and preserves its own dual-write
 recovery rules. Publishers may log the warning, but must not bypass the CLI by
 writing one audit store directly.
 
+## Actionq-daemon mapping
+
+This section freezes the audit boundary for the future actionq daemon; it does
+not claim the daemon or its caller has shipped. Actionq #973 owns that caller
+after the daemon minimum and session lifecycle exist.
+
+`source` is `actionq-daemon`. `actor` is `actionq:<runtime_session_id>` once a
+session exists and `actionq:daemon` before it does. Every session event carries
+both `session_id` (the actionq domain identifier) and `runtime_session_id` (the
+shared observation-envelope field) with the same value. Required common
+metadata is:
+
+- `action_id`;
+- `session_id` and `runtime_session_id` when a session exists;
+- selected `harness` and `model` when known;
+- `audit_status`/`audit_error` are recorded in the actionq lifecycle payload,
+  not recursively inside a failed audit event.
+
+`wi:<work_item_id>` is emitted only when the action target is a normalized
+work-item reference. `sprint:<sprint_id>` is included when sprint context is
+known. Action and session IDs are metadata, not invented ref prefixes. PR
+events include `pr:<number>` and may include `sha:<commit>` when verified.
+
+| Committed actionq fact | Audit type | Additional metadata |
+|---|---|---|
+| Action claimed and routed | `dispatch.queued` | routing source |
+| Worktree ready and harness selected | `dispatch.started` | worktree, branch |
+| Harness child PID exists | `session.start` | child PID |
+| Pause/handoff recorded | `session.pause` | pause reason, handoff pointer when present |
+| Session resumed from handoff | `session.resume` | prior session/handoff pointer |
+| Child exit and validation outcome known | `session.exit` | outcome, result, failure reason, validation summary |
+| Completed-session branch has an open PR | `pr.open` | PR number, state, branch |
+| PR state is verified merged | `pr.merge` | PR number, state, branch, merge commit when known |
+
+All emissions follow the source commit: an audit row never makes a queue,
+lease, session, validation, or PR outcome authoritative. By default
+`fail_action_on_emit_error=false`; failures remain visible in actionq lifecycle
+payloads and logs but do not overwrite the original action outcome. The first
+devbox rollout must not enable strict failure. A future strict profile may
+reject before model work only when `dispatch.queued` or `session.start` cannot
+be audited; it still must record the actionq outcome truthfully.
+
+The caller performs no blind retry. Before retrying, it reconciles by
+`source=actionq-daemon`, audit type, `action_id`, and `runtime_session_id` (plus
+PR number for PR facts). Auditctl still generates the event and origin IDs.
+The caller may then retry a missing observation, but this bounded reconciliation
+is not an exactly-once guarantee.
+
 ## Evidence and compatibility
 
 Sprintctl's current source and unit histories are pinned on auditctl work item
@@ -74,6 +122,11 @@ Sprintctl's current source and unit histories are pinned on auditctl work item
 ordering, failure degradation, and an actual fake-binary `PATH` invocation.
 Auditctl tests verify that the resulting `add` argv is accepted and produces a
 schema-valid observation envelope.
+
+The actionq contract and clean daemon-plan revision are pinned on auditctl work
+item #965. Auditctl's actionq-shaped fixture validates the complete subprocess
+argv and resulting envelope now; actionq #973 must add fake-client call-site
+tests when the daemon implementation lands.
 
 Adding an event type or changing required metadata is a versioned contract
 change. Existing event types, typed refs, and the warn-only failure posture are
