@@ -40,6 +40,10 @@ auditctl rebuild --from-ndjson /projects/dev/_artifacts/homelab-analytics/audit
 
 `auditctl add` requires `AUDITCTL_ARTIFACTS_ROOT`. Read commands do not.
 
+Publisher integrations use the documented CLI-only boundary in
+[`docs/contracts/publisher-subprocess.md`](docs/contracts/publisher-subprocess.md).
+They never import auditctl internals or write one store directly.
+
 ## Git Hooks
 
 Example hook scripts live in `hooks/`. Repos may copy or symlink them. V1 does not manage hook installation globally.
