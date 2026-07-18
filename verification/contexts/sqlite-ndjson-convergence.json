@@ -5,7 +5,7 @@
   "subject": "audit-event",
   "contract_ref": {
     "doc_id": "auditctl.audit-write-and-rebuild",
-    "revision": "sha256:db3caf9a52a863093d2d062e6b64dd317e81fd9fc6516d921fe78a5839f41e3d"
+    "revision": "git:aca143b"
   },
   "source_of_truth": "sqlite-index-plus-ndjson-recovery-shards",
   "depth": 2,
@@ -14,6 +14,7 @@
   "initial_state": ["event id absent from sqlite", "event id absent from shard"],
   "operations": [
     { "name": "add", "actors": ["publisher-a", "publisher-b"], "synchronization": "barrier-before-shard-lock" },
+    { "name": "restart-add", "actors": ["publisher-a"], "synchronization": "after-ndjson-fsync-before-sqlite-commit" },
     { "name": "rebuild", "actors": ["rebuilder"], "synchronization": "after-injected-crash" }
   ],
   "consistency": { "target": "projection-convergence", "object": "event-id-across-sqlite-and-ndjson" },
@@ -23,7 +24,11 @@
     "successful-response-has-both-copies",
     "reported-append-failure-has-no-committed-sqlite-row",
     "completed-concurrent-appends-produce-complete-lines",
-    "rebuild-deduplicates-by-event-id"
+    "rebuild-deduplicates-by-event-id",
+    "one-origin-stream-is-durable-across-processes-and-restart",
+    "origin-sequences-are-unique-and-gap-free-for-valid-local-records",
+    "ndjson-ahead-reconciliation-advances-the-cursor-before-new-allocation",
+    "legacy-events-without-envelope-fields-remain-rebuildable"
   ],
   "faults": [
     "append-error-before-fsync",
@@ -31,7 +36,7 @@
     "sqlite-commit-error-after-append",
     "partial-final-line"
   ],
-  "oracles": ["event-id-set-comparison", "ndjson-parse", "sqlite-invariant-query", "rebuild-idempotency"],
-  "implementation_anchors": ["auditctl/cli.py:add_cmd", "auditctl/ndjson.py:append_event", "auditctl/cli.py:rebuild_cmd"],
+  "oracles": ["event-id-set-comparison", "origin-tuple-uniqueness-query", "stream-sequence-contiguity", "ndjson-parse", "sqlite-invariant-query", "rebuild-idempotency"],
+  "implementation_anchors": ["auditctl/cli.py:add_cmd", "auditctl/cli.py:_reconcile_shards_before_allocation", "auditctl/db.py:allocate_origin", "auditctl/db.py:observe_origin", "auditctl/ndjson.py:append_event", "auditctl/cli.py:rebuild_cmd", "tests/test_dual_write.py:test_restart_reconciles_fsynced_ndjson_before_reusing_sequence"],
   "expansions": ["semantic-doc", "stateful-test", "concurrent-history", "fault-scenario"]
 }

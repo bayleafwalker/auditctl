@@ -41,6 +41,18 @@ def test_add_list_and_render_json(repo_root: Path, tmp_path: Path) -> None:
     rows = json.loads(listed.output)
     assert rows[0]["refs"] == ["sha:abc"]
     assert rows[0]["metadata"] == {"sha": "abc"}
+    assert rows[0]["event_id"] == rows[0]["id"]
+    assert rows[0]["record_class"] == "observation"
+    assert rows[0]["schema_version"] == 1
+    assert rows[0]["origin_seq"] == 1
+    assert rows[0]["payload"] == {
+        "summary": "Commit abc",
+        "detail": None,
+        "refs": ["sha:abc"],
+        "source": "git-hook",
+        "metadata": {"sha": "abc"},
+    }
+    assert len(rows[0]["payload_sha256"]) == 64
 
     rendered = runner.invoke(cli, ["render", "--format", "ndjson"])
     assert rendered.exit_code == 0, rendered.output
@@ -61,4 +73,3 @@ def test_add_requires_artifacts_root(repo_root: Path, monkeypatch) -> None:
     result = CliRunner().invoke(cli, ["add", "--type", "x", "--actor", "a", "--summary", "s"])
     assert result.exit_code != 0
     assert "AUDITCTL_ARTIFACTS_ROOT is required" in result.output
-

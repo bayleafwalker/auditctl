@@ -13,7 +13,14 @@ from .ids import new_event_id
 from .ndjson import append_event, read_events, resolve_inputs
 from .paths import require_artifacts_root, resolve_paths, shard_path
 from .render import render_text
-from .validation import canonical_json, parse_metadata, validate_event_object, validate_refs, validate_timestamp
+from .validation import (
+    canonical_json,
+    parse_metadata,
+    validate_event_object,
+    validate_refs,
+    validate_timestamp,
+    with_observation_envelope,
+)
 
 
 def _now() -> str:
@@ -25,6 +32,20 @@ def _open_db():
     conn = db.connect(paths.db_path)
     db.init_db(conn)
     return paths, conn
+
+
+def _reconcile_shards_before_allocation(conn, shard_dir: Path) -> None:
+    """Recover an NDJSON-ahead crash while holding the SQLite writer lock."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        input_paths = resolve_inputs(str(shard_dir)) if shard_dir.exists() else []
+        for event in read_events(input_paths):
+            db.insert_event_ignore(conn, event)
+            db.observe_origin(conn, event)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 @click.group()
@@ -70,7 +91,16 @@ def add_cmd(type_, actor, summary, detail, refs, source, metadata, ts, output_js
         raise click.ClickException(str(exc)) from exc
 
     try:
+        _reconcile_shards_before_allocation(conn, ndjson_path.parent)
         conn.execute("BEGIN IMMEDIATE")
+        origin_stream_id, origin_seq = db.allocate_origin(conn)
+        event = validate_event_object(
+            with_observation_envelope(
+                event,
+                origin_stream_id=origin_stream_id,
+                origin_seq=origin_seq,
+            )
+        )
         db.insert_event(conn, event)
         try:
             append_event(ndjson_path, event)
@@ -103,6 +133,9 @@ def add_cmd(type_, actor, summary, detail, refs, source, metadata, ts, output_js
             json.dumps(
                 {
                     "id": event["id"],
+                    "event_id": event["event_id"],
+                    "origin_stream_id": event["origin_stream_id"],
+                    "origin_seq": event["origin_seq"],
                     "ts": event["ts"],
                     "type": event["type"],
                     "source": event["source"],
@@ -224,4 +257,3 @@ def rebuild_cmd(from_ndjson, replace, dry_run) -> None:
 
 if __name__ == "__main__":
     cli()
-

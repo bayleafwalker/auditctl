@@ -8,6 +8,8 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from auditctl.cli import cli
+from auditctl import db, ndjson
+from auditctl.validation import validate_event_object, with_observation_envelope
 
 
 def _invoke_add(repo: str, artifacts: str, index: int) -> None:
@@ -80,6 +82,7 @@ def test_ndjson_failure_rolls_back_sqlite(repo_root: Path, monkeypatch) -> None:
     conn = sqlite3.connect(repo_root / ".auditctl" / "auditctl.db")
     try:
         assert conn.execute("SELECT count(*) FROM audit_event").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM producer_stream").fetchone()[0] == 0
     finally:
         conn.close()
 
@@ -98,5 +101,65 @@ def test_concurrent_writers_produce_complete_lines(repo_root: Path, tmp_path: Pa
     shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
     lines = shard.read_text().splitlines()
     assert len(lines) == 8
-    assert all(json.loads(line)["type"] == "commit" for line in lines)
+    events = [json.loads(line) for line in lines]
+    assert all(event["type"] == "commit" for event in events)
+    assert len({event["origin_stream_id"] for event in events}) == 1
+    assert sorted(event["origin_seq"] for event in events) == list(range(1, 9))
 
+
+def test_restart_reconciles_fsynced_ndjson_before_reusing_sequence(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    db_path = repo_root / ".auditctl" / "auditctl.db"
+    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    conn = db.connect(db_path)
+    db.init_db(conn)
+    conn.execute("BEGIN IMMEDIATE")
+    origin_stream_id, origin_seq = db.allocate_origin(conn)
+    ahead = validate_event_object(
+        with_observation_envelope(
+            {
+                "id": "ad:01HWXYZ0000000000000000000",
+                "ts": "2026-04-26T10:00:00Z",
+                "type": "commit",
+                "actor": "crashed-writer",
+                "summary": "fsynced before crash",
+                "detail": None,
+                "refs": ["sha:ahead"],
+                "source": "test",
+                "metadata": {},
+                "created_at": "2026-04-26T10:00:01Z",
+            },
+            origin_stream_id=origin_stream_id,
+            origin_seq=origin_seq,
+        )
+    )
+    db.insert_event(conn, ahead)
+    ndjson.append_event(shard, ahead)
+    conn.rollback()
+    conn.close()
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "add",
+            "--type",
+            "commit",
+            "--actor",
+            "restarted-writer",
+            "--summary",
+            "after restart",
+            "--ts",
+            "2026-04-26T10:00:02Z",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    events = [json.loads(line) for line in shard.read_text().splitlines()]
+    assert [event["origin_seq"] for event in events] == [1, 2]
+    assert {event["origin_stream_id"] for event in events} == {origin_stream_id}
+    rebuilt = db.connect(db_path)
+    try:
+        assert len(db.query_events(rebuilt, limit=None)) == 2
+    finally:
+        rebuilt.close()

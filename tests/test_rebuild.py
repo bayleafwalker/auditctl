@@ -36,7 +36,28 @@ def test_rebuild_from_directory_round_trips(repo_root: Path, tmp_path: Path) -> 
 
     listed = runner.invoke(cli, ["list", "--json"])
     assert listed.exit_code == 0, listed.output
-    assert json.loads(listed.output)[0]["summary"] == "Keep shards"
+    rebuilt_event = json.loads(listed.output)[0]
+    assert rebuilt_event["summary"] == "Keep shards"
+    assert rebuilt_event["origin_seq"] == 1
+
+    next_add = runner.invoke(
+        cli,
+        [
+            "add",
+            "--type",
+            "decision",
+            "--actor",
+            "tester",
+            "--summary",
+            "Continue stream",
+            "--ts",
+            "2026-04-26T10:00:02Z",
+        ],
+    )
+    assert next_add.exit_code == 0, next_add.output
+    events = [json.loads(line) for line in next(shard_dir.glob("events-*.ndjson")).read_text().splitlines()]
+    assert [event["origin_seq"] for event in events] == [1, 2]
+    assert len({event["origin_stream_id"] for event in events}) == 1
 
 
 def test_rebuild_duplicate_lines_are_ignored(repo_root: Path, tmp_path: Path) -> None:

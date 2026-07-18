@@ -10,6 +10,12 @@ Repo-local audit ledger for the agent-ops substrate.
 
 The sqlite database is the fast local query index. The NDJSON shards are the portable recovery and cockpit-read artifact.
 
+New events also carry the shared producer-observation envelope: a durable
+`origin_stream_id`, monotonically allocated `origin_seq`, the existing audit
+ID as `event_id`, mapped event/timestamp fields, and a canonical payload
+digest. Existing shards without these additive fields remain readable and
+rebuildable.
+
 ## Install
 
 ```bash
@@ -37,4 +43,3 @@ auditctl rebuild --from-ndjson /projects/dev/_artifacts/homelab-analytics/audit
 ## Git Hooks
 
 Example hook scripts live in `hooks/`. Repos may copy or symlink them. V1 does not manage hook installation globally.
-
