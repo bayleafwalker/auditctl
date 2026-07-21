@@ -29,3 +29,8 @@ local buffering/rebuild or turn audit events into authority transitions.
 `vuoro-dev` acceptance covers offline append, delayed upload, duplicate retry,
 missing sequence, lost response, receipt lookup, rebuild, and service restart.
 The local shard remains sufficient to retry or reconstruct after remote loss.
+
+## Backlog registration
+
+- **#1201** — central ingest schema, deployment migration, and role split.
+- **#1202** — audit observation/receipt adapter and catalog; blocked by #1201.
