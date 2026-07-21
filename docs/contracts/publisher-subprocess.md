@@ -115,6 +115,44 @@ PR number for PR facts). Auditctl still generates the event and origin IDs.
 The caller may then retry a missing observation, but this bounded reconciliation
 is not an exactly-once guarantee.
 
+## Session mechanization (Tier-0) mapping
+
+This section freezes the audit boundary for the Tier-0 session wrapper
+described in `agentops/docs/plans/agentops/session-mechanization-plan.md`. It
+does not claim the wrapper has shipped; actionq owns that mechanism per the
+plan's ownership section. Auditctl's role is limited to accepting and
+round-tripping the observation types below — it does not interpret session
+liveness, store raw prompts/transcripts, or mutate sprint state.
+
+`source` is `session-wrapper`. `actor` is the wrapper's process identity.
+Every event carries `runtime_session_id` in metadata (mapped by
+`with_observation_envelope` onto the shared observation-envelope field), so
+all events from one session correlate without needing a separate lookup.
+`session.started` and both session-end types additionally carry
+`origin_stream_id` as the producer outbox stream identity once enveloped;
+publishers do not construct it.
+
+| Committed wrapper fact | Audit type | Required refs | Required metadata |
+|---|---|---|---|
+| Session began | `session.started` | none required; `wi:<id>` or `sprint:<id>` only when Tier-1 rank is `explicit` | `runtime_session_id`, `repo_project`, `harness` (`model` is `null` for `harness=manual`) |
+| Clean session end observed | `session.ended` | same as `session.started` | `runtime_session_id`, `end_reason` |
+| No clean end observed (crash recovery) | `session.end-inferred` | same as `session.started` | `runtime_session_id`, `end_reason` |
+| Session capsule finalized | `session.capsule-pointer` | `capsule:<capsule_id>` | `runtime_session_id`, `capsule_id` |
+
+`session.capsule-pointer` is non-validation-bearing: it makes a finalized
+`session-capsule/v1` artifact discoverable to the periodic scribe and
+post-session reconciler (`session-mechanization-contracts.md`); auditctl does
+not validate the referenced artifact's contents. `session.ended` and
+`session.end-inferred` are mutually exclusive per session — the wrapper picks
+one, matching `end.kind` in the capsule contract (`clean-end` vs
+`end-inferred`).
+
+As with the sprintctl and actionq mappings, required-metadata columns are a
+publisher contract, not a per-event-type schema enforced inside
+`validate_event_object` — auditctl validates the shared observation envelope
+and typed-ref grammar for every event type uniformly and leaves domain-shaped
+metadata requirements to the publisher and its own tests.
+
 ## Evidence and compatibility
 
 Sprintctl's current source and unit histories are pinned on auditctl work item
@@ -127,6 +165,13 @@ The actionq contract and clean daemon-plan revision are pinned on auditctl work
 item #965. Auditctl's actionq-shaped fixture validates the complete subprocess
 argv and resulting envelope now; actionq #973 must add fake-client call-site
 tests when the daemon implementation lands.
+
+The session mechanization (Tier-0) mapping above is pinned on auditctl work
+item #1113. Auditctl's session-wrapper-shaped fixtures validate the complete
+subprocess argv and resulting envelope, shard append, and rebuild round-trip
+for `session.started`, `session.ended`, `session.end-inferred`, and
+`session.capsule-pointer` now; the wrapper caller itself (actionq-owned) and
+its own call-site tests are out of scope for this item.
 
 Adding an event type or changing required metadata is a versioned contract
 change. Existing event types, typed refs, and the warn-only failure posture are

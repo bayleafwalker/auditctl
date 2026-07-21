@@ -141,3 +141,212 @@ def test_actionq_session_exit_argv_emits_a_valid_shard_observation(
     assert event["refs"] == ["wi:1154", "sprint:414"]
     assert event["runtime_session_id"] == session_id
     assert event["metadata"]["action_id"] == 21
+
+
+def test_session_mechanization_contract_freezes_event_set() -> None:
+    contract = (ROOT / "docs/contracts/publisher-subprocess.md").read_text(encoding="utf-8")
+    normalized = " ".join(contract.split())
+
+    for event_type in (
+        "session.started",
+        "session.ended",
+        "session.end-inferred",
+        "session.capsule-pointer",
+    ):
+        assert f"`{event_type}`" in contract
+    assert "session-wrapper" in contract
+    assert "does not claim the wrapper has shipped" in normalized
+    assert "runtime_session_id" in contract and "capsule_id" in contract
+    assert "capsule:<capsule_id>" in contract
+    assert "non-validation-bearing" in normalized
+    assert "does not interpret session liveness, store raw prompts/transcripts, or mutate sprint state" in normalized
+
+
+def test_session_started_argv_emits_a_valid_shard_observation(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    runtime_session_id = "runsess-0001"
+    result = CliRunner().invoke(
+        cli,
+        [
+            "add",
+            "--type",
+            "session.started",
+            "--source",
+            "session-wrapper",
+            "--actor",
+            "session-wrapper:devbox",
+            "--summary",
+            "Session runsess-0001 started",
+            "--metadata",
+            json.dumps(
+                {
+                    "runtime_session_id": runtime_session_id,
+                    "repo_project": "auditctl",
+                    "harness": "claude-code",
+                    "model": "claude-sonnet-5",
+                },
+                separators=(",", ":"),
+            ),
+            "--ts",
+            "2026-04-26T10:00:00Z",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    event = json.loads(shard.read_text(encoding="utf-8"))
+    assert validate_event_object(event) == event
+    assert event["type"] == "session.started"
+    assert event["source"] == "session-wrapper"
+    assert event["runtime_session_id"] == runtime_session_id
+    assert event["metadata"]["harness"] == "claude-code"
+
+
+def test_session_ended_and_end_inferred_argv_emit_valid_shard_observations(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    runtime_session_id = "runsess-0002"
+    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+
+    ended = runner.invoke(
+        cli,
+        [
+            "add",
+            "--type",
+            "session.ended",
+            "--source",
+            "session-wrapper",
+            "--actor",
+            "session-wrapper:devbox",
+            "--summary",
+            "Session runsess-0002 ended",
+            "--metadata",
+            json.dumps(
+                {"runtime_session_id": runtime_session_id, "end_reason": "clean-exit"},
+                separators=(",", ":"),
+            ),
+            "--ts",
+            "2026-04-26T10:00:01Z",
+        ],
+    )
+    assert ended.exit_code == 0, ended.output
+
+    inferred = runner.invoke(
+        cli,
+        [
+            "add",
+            "--type",
+            "session.end-inferred",
+            "--source",
+            "session-wrapper",
+            "--actor",
+            "session-wrapper:devbox",
+            "--summary",
+            "Session runsess-0003 end inferred",
+            "--metadata",
+            json.dumps(
+                {"runtime_session_id": "runsess-0003", "end_reason": "crash-recovery"},
+                separators=(",", ":"),
+            ),
+            "--ts",
+            "2026-04-26T10:00:02Z",
+        ],
+    )
+    assert inferred.exit_code == 0, inferred.output
+
+    events = [json.loads(line) for line in shard.read_text(encoding="utf-8").splitlines()]
+    assert [e["type"] for e in events] == ["session.ended", "session.end-inferred"]
+    for event in events:
+        assert validate_event_object(event) == event
+    assert events[0]["runtime_session_id"] == runtime_session_id
+    assert events[1]["metadata"]["end_reason"] == "crash-recovery"
+
+
+def test_session_capsule_pointer_argv_emits_a_valid_shard_observation(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    runtime_session_id = "runsess-0004"
+    capsule_id = "01f2b3c4-5555-4666-8777-999999999999"
+    result = CliRunner().invoke(
+        cli,
+        [
+            "add",
+            "--type",
+            "session.capsule-pointer",
+            "--source",
+            "session-wrapper",
+            "--actor",
+            "session-wrapper:devbox",
+            "--summary",
+            f"Capsule {capsule_id} finalized",
+            "--ref",
+            f"capsule:{capsule_id}",
+            "--metadata",
+            json.dumps(
+                {"runtime_session_id": runtime_session_id, "capsule_id": capsule_id},
+                separators=(",", ":"),
+            ),
+            "--ts",
+            "2026-04-26T10:00:03Z",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    event = json.loads(shard.read_text(encoding="utf-8"))
+    assert validate_event_object(event) == event
+    assert event["type"] == "session.capsule-pointer"
+    assert event["refs"] == [f"capsule:{capsule_id}"]
+    assert event["metadata"]["capsule_id"] == capsule_id
+
+
+def test_session_mechanization_events_survive_rebuild_round_trip(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    runtime_session_id = "runsess-0005"
+    capsule_id = "11f2b3c4-5555-4666-8777-999999999999"
+    common_metadata = {"runtime_session_id": runtime_session_id}
+
+    for event_type, extra, ref in (
+        ("session.started", {"repo_project": "auditctl", "harness": "claude-code"}, None),
+        ("session.ended", {"end_reason": "clean-exit"}, None),
+        ("session.capsule-pointer", {"capsule_id": capsule_id}, f"capsule:{capsule_id}"),
+    ):
+        args = [
+            "add",
+            "--type",
+            event_type,
+            "--source",
+            "session-wrapper",
+            "--actor",
+            "session-wrapper:devbox",
+            "--summary",
+            f"{event_type} event",
+            "--metadata",
+            json.dumps({**common_metadata, **extra}, separators=(",", ":")),
+            "--ts",
+            "2026-04-26T10:00:00Z",
+        ]
+        if ref:
+            args.extend(["--ref", ref])
+        added = runner.invoke(cli, args)
+        assert added.exit_code == 0, added.output
+
+    shard_dir = tmp_path / "_artifacts" / "example-repo" / "audit"
+    (repo_root / ".auditctl" / "auditctl.db").unlink()
+    rebuild = runner.invoke(cli, ["rebuild", "--from-ndjson", str(shard_dir), "--replace"])
+    assert rebuild.exit_code == 0, rebuild.output
+    assert "3 imported" in rebuild.output
+
+    listed = runner.invoke(cli, ["list", "--json", "--limit", "10"])
+    assert listed.exit_code == 0, listed.output
+    rebuilt_events = json.loads(listed.output)
+    assert {event["type"] for event in rebuilt_events} == {
+        "session.started",
+        "session.ended",
+        "session.capsule-pointer",
+    }
+    assert all(event["runtime_session_id"] == runtime_session_id for event in rebuilt_events)

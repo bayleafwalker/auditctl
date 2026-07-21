@@ -16,6 +16,12 @@ def test_invalid_ref_errors() -> None:
         validate_refs(["bad:1"])
 
 
+def test_capsule_ref_prefix_is_valid() -> None:
+    assert validate_refs(["capsule:01f2b3c4-5555-4666-8777-999999999999"]) == [
+        "capsule:01f2b3c4-5555-4666-8777-999999999999"
+    ]
+
+
 def test_invalid_timestamp_errors() -> None:
     with pytest.raises(ValueError, match="ending in Z"):
         validate_timestamp("2026-04-26T10:00:00+00:00")
