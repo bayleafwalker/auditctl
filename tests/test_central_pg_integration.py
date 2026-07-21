@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import getpass
+import json
 import shutil
 import socket
 import subprocess
@@ -8,11 +9,14 @@ import tempfile
 import threading
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Iterator
 from uuid import uuid4
 
 import pytest
+from click.testing import CliRunner
 
+from auditctl import db
 from auditctl.central import (
     IngestConflictError,
     IngestGapError,
@@ -22,6 +26,7 @@ from auditctl.central import (
     list_observations,
     prepare_observation,
 )
+from auditctl.cli import cli
 from auditctl.central_schema import (
     MigrationDriftError,
     SchemaCompatibilityError,
@@ -29,6 +34,7 @@ from auditctl.central_schema import (
     migrate,
 )
 from auditctl.validation import with_observation_envelope
+from auditctl.vuoro_adapter import VuoroAuditAdapter
 
 psycopg = pytest.importorskip("psycopg")
 from psycopg import errors  # noqa: E402
@@ -156,6 +162,121 @@ def _migrate_current(dsn: str, schema: str) -> None:
             runtime_role=RUNTIME_ROLE,
         )
     assert result.installed_version == 2
+
+
+class AdapterRejected(RuntimeError):
+    def __init__(self, code: str, message: str, http_status: int) -> None:
+        super().__init__(message)
+        self.code = code
+        self.http_status = http_status
+
+
+def _adapter_rejection(code: str, message: str, http_status: int) -> BaseException:
+    return AdapterRejected(code, message, http_status)
+
+
+def _adapter(dsn: str, schema: str) -> VuoroAuditAdapter:
+    return VuoroAuditAdapter(
+        connection_factory=lambda: _connect(dsn, RUNTIME_ROLE),
+        schema=schema,
+        rejection_factory=_adapter_rejection,
+    )
+
+
+def test_vuoro_adapter_retries_local_outbox_across_service_restart(
+    postgres_dsn: str, repo_root: Path, tmp_path: Path
+) -> None:
+    local_add = CliRunner().invoke(
+        cli,
+        [
+            "add",
+            "--type",
+            "session.started",
+            "--actor",
+            "codex:adapter-integration",
+            "--summary",
+            "Buffered before central service availability",
+            "--source",
+            "adapter-integration",
+            "--ts",
+            "2026-07-21T12:00:00Z",
+            "--json",
+        ],
+    )
+    assert local_add.exit_code == 0, local_add.output
+    shard = (
+        tmp_path
+        / "_artifacts"
+        / "example-repo"
+        / "audit"
+        / "events-2026-07-21.ndjson"
+    )
+    observation = json.loads(shard.read_text(encoding="utf-8").strip())
+
+    schema = _schema("audit_adapter")
+    _migrate_current(postgres_dsn, schema)
+    context = SimpleNamespace(idempotency_key=observation["event_id"])
+    first_adapter = _adapter(postgres_dsn, schema)
+
+    # Treat the first return as a lost response. A fresh adapter instance uses
+    # only the durable local observation and returns the original receipt.
+    first_adapter.submit_observation({"observation": observation}, context)
+    restarted_adapter = _adapter(postgres_dsn, schema)
+    retried = restarted_adapter.submit_observation(
+        {"observation": observation}, context
+    )["receipt"]
+    assert retried["duplicate"]
+    assert retried["duplicate_count"] == 1
+
+    lookup = restarted_adapter.lookup_receipt(
+        {"event_id": observation["event_id"]}, SimpleNamespace()
+    )["receipt"]
+    assert lookup is not None
+    assert lookup["receipt_id"] == retried["receipt_id"]
+    rows = restarted_adapter.read_observations(
+        {"after_offset": 0, "limit": 1}, SimpleNamespace()
+    )
+    assert rows["watermark"] == retried["ingest_offset"]
+    assert rows["observations"][0]["event_id"] == observation["event_id"]
+    assert rows["observations"][0]["ingested_at"].endswith("Z")
+
+    status = restarted_adapter.stream_status(
+        {"origin_stream_id": observation["origin_stream_id"]}, SimpleNamespace()
+    )
+    assert status["next_expected_seq"] == 2
+    gap = _event(
+        origin_stream_id=observation["origin_stream_id"],
+        origin_seq=3,
+        number=98,
+    )
+    with pytest.raises(AdapterRejected) as rejected:
+        restarted_adapter.submit_observation(
+            {"observation": gap},
+            SimpleNamespace(idempotency_key=gap["event_id"]),
+        )
+    assert (rejected.value.code, rejected.value.http_status) == (
+        "audit-origin-sequence-gap",
+        409,
+    )
+    assert restarted_adapter.stream_status(
+        {"origin_stream_id": observation["origin_stream_id"]}, SimpleNamespace()
+    )["next_expected_seq"] == 2
+    assert restarted_adapter.schema_compatibility({}, SimpleNamespace())[
+        "compatible"
+    ]
+
+    # Local recovery remains independent of the central service and receipt.
+    rebuild = CliRunner().invoke(
+        cli, ["rebuild", "--from-ndjson", str(shard), "--replace"]
+    )
+    assert rebuild.exit_code == 0, rebuild.output
+    local = db.connect(repo_root / ".auditctl" / "auditctl.db")
+    try:
+        assert [row["id"] for row in db.query_events(local, limit=None)] == [
+            observation["id"]
+        ]
+    finally:
+        local.close()
 
 
 def test_empty_to_current_upgrade_backfills_receipts_and_is_idempotent(

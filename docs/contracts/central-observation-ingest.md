@@ -20,8 +20,11 @@ central database. If submission or its response is lost, the original NDJSON
 record is the retry source; central loss can be reconstructed from those
 records.
 
-The HTTP/catalog adapter is a separate change. It must call this owner-provided
-application core rather than duplicate admission rules in Vuoro.
+The HTTP/catalog adapter is `auditctl.vuoro_adapter`. It calls this
+owner-provided application core rather than duplicating admission rules in
+Vuoro. Importing auditctl's local capture path does not import Vuoro or a
+PostgreSQL driver; the composed service supplies its catalog registry and
+runtime connection factory explicitly.
 
 ## Admission and receipt identity
 
@@ -66,6 +69,32 @@ occurrence-time access. Receipt lookup accepts exactly one stable receipt ID or
 event ID. Stream status exposes `highest_contiguous_seq` and
 `next_expected_seq`; it does not invent or fill missing producer events.
 
+## Vuoro adapter and catalog
+
+The owner adapter registers five domain-qualified protocol-v1 operations:
+
+| Operation | Semantics | Idempotency | Authority |
+| --- | --- | --- | --- |
+| `audit.observation.submit` | write one complete local observation envelope | required; durable identity is the origin tuple and canonical record hash | `audit.observation.submit` |
+| `audit.receipt.lookup` | read by exactly one receipt ID or event ID | not allowed | `audit.observation.read` |
+| `audit.observation.list` | read at most 100 observations after an ingest offset | not allowed | `audit.observation.read` |
+| `audit.stream.status` | read the contiguous producer cursor | not allowed | `audit.observation.read` |
+| `audit.schema.compatibility` | read installed schema and runtime-role compatibility | not allowed | `audit.observation.read` |
+
+The operation schemas use JSON Schema 2020-12, reject undeclared top-level
+arguments, and declare only the protocol-v1 base schema feature. Submission
+requires a transport idempotency key, but auditctl does not treat that opaque
+key as a second event identity. Exact retry is established by the stable
+`(origin_stream_id, origin_seq)` and record hash already stored in the central
+ledger. Conflicts and sequence gaps are intentional domain rejections; a gap
+reports the expected and received sequences, and stream status exposes the
+durable cursor.
+
+Adapter instances are stateless. A process restart creates a new adapter over
+the same runtime database and a producer retries from its local NDJSON record.
+The service never writes local shards and central availability is not a
+precondition for local append or rebuild.
+
 ## Compatibility and roles
 
 The current central schema is version 2 and serves `audit/v1`. Runtime
@@ -102,6 +131,7 @@ Disposable-PostgreSQL tests establish within their stated bounds:
 - separate schemas retaining isolated histories; and
 - runtime DDL denial, runtime-role rotation, and migration-role service refusal.
 
-Deployment topology, identity issuance, Vuoro catalog publication, HTTP fault
-injection, backup/restore, and cross-machine functional tests remain owned by
-the later adapter and appservice rollout work.
+The owner adapter's catalog metadata and handler-to-application-core mapping
+are covered locally. Deployment topology, identity issuance, composed-service
+HTTP fault injection, backup/restore, and cross-machine functional tests
+remain owned by Vuoro composition and appservice rollout work.

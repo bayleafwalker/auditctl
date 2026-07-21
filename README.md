@@ -45,6 +45,10 @@ Publisher integrations use the documented CLI-only boundary in
 They never import auditctl internals or write one store directly.
 
 The optional served-audit substrate remains separate from local capture.
+`auditctl.vuoro_adapter.VuoroAuditAdapter` registers the protocol-v1 submit,
+receipt, bounded-read, stream-status, and compatibility operations when a
+Vuoro service supplies its catalog registry and runtime connection factory.
+Importing the local CLI does not import Vuoro or PostgreSQL.
 [`docs/contracts/central-observation-ingest.md`](docs/contracts/central-observation-ingest.md)
 defines its observation-only PostgreSQL and receipt semantics, while
 [`docs/operations/central-schema-migrations.md`](docs/operations/central-schema-migrations.md)

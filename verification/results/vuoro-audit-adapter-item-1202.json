@@ -1,0 +1,112 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "auditctl.vuoro-audit-adapter",
+  "contract_ref": {
+    "doc_id": "auditctl-central-observation-ingest",
+    "revision": "sha256:df9ca3fadd6b9b5d314338126dc5b06db2873bca15851bcbcaa933a5489e7173"
+  },
+  "implementation_sha": "sha256:vuoro-audit-adapter-v1:614c7eb34049919f286d6d375f4f7a6aa1bf98bc85fa1510eae5b6bad37844e8",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary-local-SQLite-NDJSON-and-disposable-PostgreSQL",
+    "isolation": "PostgreSQL READ COMMITTED transactions with auditctl event advisory locks and origin-stream row locks; local artifacts confined to pytest temporary directories",
+    "tool_versions": {
+      "postgresql": "18.4",
+      "python": "3.14.6",
+      "pytest": "9.1.1"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 20,
+    "bounds": {
+      "postgresql_instances": 1,
+      "adapter_end_to_end_histories": 1,
+      "service_instances": 2,
+      "submission_attempts": 2,
+      "global_event_id_races": 12,
+      "catalog_operations": 5,
+      "read_limit": 100
+    },
+    "faults_exercised": [
+      "central-service-unavailable-during-local-append",
+      "delayed-observation-submission",
+      "lost-submit-response",
+      "service-process-restart-before-retry",
+      "missing-origin-sequence",
+      "duplicate-upload",
+      "concurrent-identical-upload",
+      "concurrent-global-event-id-reuse",
+      "runtime-role-mismatch",
+      "future-schema-version"
+    ]
+  },
+  "claims": [
+    {
+      "property": "an observation appended while the central service is unavailable can be submitted later and recovered locally without central state",
+      "result": "example-tested",
+      "evidence": [
+        "the test wrote one observation through the normal auditctl add path before creating the central schema",
+        "the delayed adapter submission admitted the exact NDJSON record after the central schema became available",
+        "auditctl rebuild --replace reconstructed the local SQLite row from the shard after central submission"
+      ]
+    },
+    {
+      "property": "a lost submission response retried through a new stateless adapter instance returns the stable receipt rather than another observation",
+      "result": "concurrency-tested",
+      "evidence": [
+        "the first adapter result was intentionally discarded and a newly constructed adapter retried from the local record",
+        "the retry returned duplicate=true, duplicate_count=1, and the receipt lookup returned the same receipt ID",
+        "the broader central gate also raced two runtime connections and observed one receipt identity"
+      ]
+    },
+    {
+      "property": "a missing origin sequence is a visible domain rejection and does not advance the stream cursor",
+      "result": "example-tested",
+      "evidence": [
+        "sequence 3 after sequence 1 produced audit-origin-sequence-gap with HTTP status 409",
+        "stream status remained next_expected_seq=2 after the rejection"
+      ]
+    },
+    {
+      "property": "the adapter exposes receipt lookup, offset-bounded reads, stream status, and read-only runtime compatibility through owner-core handlers",
+      "result": "example-tested",
+      "evidence": [
+        "receipt lookup by event ID returned the admitted receipt",
+        "a limit-1 read returned one observation and its server ingest-offset watermark",
+        "compatibility reported the migrated runtime schema as compatible without invoking migration"
+      ]
+    },
+    {
+      "property": "the owner adapter registers a protocol-v1 catalog with explicit schemas, authorities, execution semantics, and idempotency",
+      "result": "example-tested",
+      "evidence": [
+        "six unit tests checked five domain-qualified operation definitions, handler mappings, import isolation, input translation, and JSON-safe results",
+        "all input and result roots declare JSON Schema 2020-12 and bounded reads declare maximum 100",
+        "direct registration against Vuoro CatalogRegistry accepted all five operations and produced a deterministic catalog revision"
+      ]
+    },
+    {
+      "property": "adding the served adapter does not change local dual-write, rebuild, publisher, or central admission semantics",
+      "result": "concurrency-tested",
+      "evidence": [
+        "the complete 63-test suite passed with no skips",
+        "the suite included all local dual-write and rebuild tests plus nine disposable-PostgreSQL integration tests",
+        "the local CLI import path does not import vuoro_service or psycopg"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "the first adapter read-path run serialized a PostgreSQL timestamptz with the server's +03:00 offset instead of the catalog's canonical UTC form; conversion was corrected to UTC and the targeted and full gates passed",
+      "trace_ref": "tests/test_central_pg_integration.py:test_vuoro_adapter_retries_local_outbox_across_service_restart",
+      "seed": null
+    }
+  ],
+  "notes": [
+    "Every PostgreSQL instance, schema, local repository, SQLite database, and NDJSON shard used by verification was temporary and removed by fixtures; no shared or production data was addressed.",
+    "The direct Vuoro composition check used the current sibling vuoro-service implementation only to validate registry acceptance; auditctl retains no runtime dependency in its local capture path.",
+    "Composed HTTP identity resolution, deployment topology, backup/restore, and cross-machine functional testing remain appservice/Vuoro rollout responsibilities.",
+    "implementation_sha is SHA-256 over each UTF-8 relative path, NUL, exact file bytes, and NUL in the sorted README.md, auditctl/central.py, auditctl/central_schema.py, auditctl/vuoro_adapter.py, and docs/contracts/central-observation-ingest.md path set asserted by tests/test_verification_contracts.py. This excludes the evidence packet itself and is reproducible without self-reference."
+  ]
+}

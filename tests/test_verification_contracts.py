@@ -13,6 +13,13 @@ CENTRAL_IMPLEMENTATION_PATHS = (
     "auditctl/central_schema.py",
     "pyproject.toml",
 )
+VUORO_ADAPTER_IMPLEMENTATION_PATHS = (
+    "README.md",
+    "auditctl/central.py",
+    "auditctl/central_schema.py",
+    "auditctl/vuoro_adapter.py",
+    "docs/contracts/central-observation-ingest.md",
+)
 
 
 def test_dual_write_context_records_convergence_not_atomicity():
@@ -65,4 +72,48 @@ def test_central_result_digest_matches_the_packaged_implementation_tree():
 
     assert packet["implementation_sha"] == (
         f"sha256:central-implementation-v1:{digest.hexdigest()}"
+    )
+
+
+def test_vuoro_adapter_context_and_result_are_bound_to_the_owned_contract():
+    context = json.loads(
+        (ROOT / "verification/contexts/vuoro-audit-adapter.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    result = json.loads(
+        (
+            ROOT / "verification/results/vuoro-audit-adapter-item-1202.json"
+        ).read_text(encoding="utf-8")
+    )
+    contract_digest = hashlib.sha256(
+        (ROOT / "docs/contracts/central-observation-ingest.md").read_bytes()
+    ).hexdigest()
+
+    assert context["depth"] == 2
+    assert "lost-submit-response" in context["faults"]
+    assert context["bounds"]["catalog_operations"] == 5
+    assert result["context_id"] == context["id"]
+    assert context["contract_ref"] == result["contract_ref"]
+    assert context["contract_ref"]["revision"] == f"sha256:{contract_digest}"
+
+
+def test_vuoro_adapter_result_digest_matches_the_owned_implementation_tree():
+    packet = json.loads(
+        (
+            ROOT / "verification/results/vuoro-audit-adapter-item-1202.json"
+        ).read_text(encoding="utf-8")
+    )
+    digest = hashlib.sha256()
+    assert VUORO_ADAPTER_IMPLEMENTATION_PATHS == tuple(
+        sorted(VUORO_ADAPTER_IMPLEMENTATION_PATHS)
+    )
+    for relative_path in VUORO_ADAPTER_IMPLEMENTATION_PATHS:
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update((ROOT / relative_path).read_bytes())
+        digest.update(b"\0")
+
+    assert packet["implementation_sha"] == (
+        f"sha256:vuoro-audit-adapter-v1:{digest.hexdigest()}"
     )
