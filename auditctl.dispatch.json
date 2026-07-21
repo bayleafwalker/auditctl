@@ -26,7 +26,7 @@
     "overlays": [".agents/overlays/auditctl.state-protocols.md"]
   },
   "scope": {
-    "allowed_path_roots": ["auditctl/", "tests/", "docs/", "verification/", ".agents/"],
+    "allowed_path_roots": ["auditctl/", "tests/", "docs/", "verification/", ".agents/", "README.md", "pyproject.toml"],
     "out_of_scope": ["shared workspace audit artifacts during verification"]
   },
   "risk_surfaces": [

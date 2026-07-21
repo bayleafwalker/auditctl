@@ -19,22 +19,23 @@
     {"name": "bounded-read", "actors": ["runtime-uploader-a"], "synchronization": "after-ingest-offset"}
   ],
   "consistency": {"target": "serializable-per-origin-admission", "object": "origin-stream-sequence-and-stable-receipt"},
-  "assumptions": {"isolation": "postgresql-read-committed-plus-row-lock", "clock": "database-receipt-clock", "fairness": "none"},
-  "bounds": {"migration_jobs": 2, "uploaders": 2, "events": 3, "schemas": 2, "read_limit": 100},
+  "assumptions": {"isolation": "postgresql-read-committed-plus-event-advisory-lock-and-stream-row-lock", "clock": "database-receipt-clock", "fairness": "none"},
+  "bounds": {"migration_jobs": 2, "uploaders": 2, "events": 3, "schemas": 2, "global_event_id_races": 12, "read_limit": 100},
   "invariants": [
     "migration-jobs-serialize-per-schema-and-retries-are-idempotent",
     "runtime-role-has-no-schema-ddl",
     "migration-role-fails-runtime-compatibility",
     "one-origin-tuple-identifies-one-record-hash",
     "exact-retry-returns-one-stable-receipt",
+    "one-global-event-id-admits-one-origin-record-and-loser-state-rolls-back",
     "gap-admits-no-record-and-exposes-next-expected-sequence",
     "bounded-reads-follow-server-ingest-offset",
     "isolated-environment-schemas-do-not-share-receipts",
     "observations-create-no-authority-state",
     "local-ndjson-remains-the-retry-and-rebuild-source"
   ],
-  "faults": ["duplicate-upload", "lost-response-before-receipt-observed", "missing-origin-sequence", "concurrent-identical-upload", "concurrent-migration-job", "migration-checksum-drift"],
-  "oracles": ["migration-ledger-version-and-checksum", "origin-high-water-query", "receipt-identity-comparison", "runtime-ddl-denial", "schema-isolation-query"],
-  "implementation_anchors": ["auditctl/central_schema.py:migrate", "auditctl/central_schema.py:check_compatibility", "auditctl/central.py:ingest_observation", "auditctl/central.py:get_receipt", "auditctl/central.py:list_observations", "tests/test_central_pg_integration.py:test_concurrent_retry_returns_one_receipt_and_isolated_schemas_do_not_mix"],
+  "faults": ["duplicate-upload", "lost-response-before-receipt-observed", "missing-origin-sequence", "concurrent-identical-upload", "concurrent-global-event-id-reuse", "concurrent-migration-job", "migration-checksum-drift"],
+  "oracles": ["migration-ledger-version-and-checksum", "origin-high-water-query", "receipt-identity-comparison", "global-event-id-conflict-class", "losing-stream-absence-query", "runtime-ddl-denial", "schema-isolation-query"],
+  "implementation_anchors": ["auditctl/central_schema.py:migrate", "auditctl/central_schema.py:check_compatibility", "auditctl/central.py:ingest_observation", "auditctl/central.py:get_receipt", "auditctl/central.py:list_observations", "tests/test_central_pg_integration.py:test_concurrent_retry_returns_one_receipt_and_isolated_schemas_do_not_mix", "tests/test_central_pg_integration.py:test_concurrent_streams_reusing_global_event_id_get_owner_conflict_without_residue"],
   "expansions": ["semantic-doc", "stateful-test", "concurrent-history", "fault-scenario"]
 }

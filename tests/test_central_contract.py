@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-from auditctl.central import MAX_READ_LIMIT, prepare_observation
+from auditctl.central import (
+    MAX_READ_LIMIT,
+    _is_event_id_unique_violation,
+    prepare_observation,
+)
 from auditctl.central_schema import (
     CURRENT_SCHEMA_VERSION,
     load_migrations,
@@ -75,3 +81,19 @@ def test_migration_and_runtime_roles_must_be_distinct() -> None:
             migration_role="same_role",
             runtime_role="same_role",
         )
+
+
+def test_only_the_owned_event_id_constraint_is_translated() -> None:
+    event_conflict = RuntimeError("event conflict")
+    event_conflict.sqlstate = "23505"  # type: ignore[attr-defined]
+    event_conflict.diag = SimpleNamespace(  # type: ignore[attr-defined]
+        constraint_name="ingest_observation_event_id_key"
+    )
+    origin_conflict = RuntimeError("origin conflict")
+    origin_conflict.sqlstate = "23505"  # type: ignore[attr-defined]
+    origin_conflict.diag = SimpleNamespace(  # type: ignore[attr-defined]
+        constraint_name="ingest_observation_origin_seq_key"
+    )
+
+    assert _is_event_id_unique_violation(event_conflict)
+    assert not _is_event_id_unique_violation(origin_conflict)

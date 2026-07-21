@@ -414,6 +414,75 @@ def test_concurrent_retry_returns_one_receipt_and_isolated_schemas_do_not_mix(
     assert other.duplicate_count == 0
 
 
+def test_concurrent_streams_reusing_global_event_id_get_owner_conflict_without_residue(
+    postgres_dsn: str,
+) -> None:
+    schema = _schema("audit_event_race")
+    _migrate_current(postgres_dsn, schema)
+
+    for attempt in range(12):
+        streams = (str(uuid4()), str(uuid4()))
+        events = [
+            _event(
+                origin_stream_id=stream_id,
+                origin_seq=1,
+                number=100 + attempt,
+                summary=f"Competing stream {index}",
+            )
+            for index, stream_id in enumerate(streams)
+        ]
+        barrier = threading.Barrier(2)
+        result_lock = threading.Lock()
+        receipts: list[tuple[str, Any]] = []
+        conflicts: list[tuple[str, IngestConflictError]] = []
+        failures: list[BaseException] = []
+
+        def ingest_competing(stream_id: str, event: dict[str, Any]) -> None:
+            try:
+                with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
+                    barrier.wait()
+                    receipt = ingest_observation(conn, event, schema=schema)
+                with result_lock:
+                    receipts.append((stream_id, receipt))
+            except IngestConflictError as exc:
+                with result_lock:
+                    conflicts.append((stream_id, exc))
+            except BaseException as exc:  # pragma: no cover - reported by assertion
+                with result_lock:
+                    failures.append(exc)
+
+        threads = [
+            threading.Thread(target=ingest_competing, args=(stream_id, event))
+            for stream_id, event in zip(streams, events, strict=True)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20)
+
+        assert not failures
+        assert not any(thread.is_alive() for thread in threads)
+        assert len(receipts) == 1
+        assert len(conflicts) == 1
+        assert "event_id already identifies" in str(conflicts[0][1])
+        winner_stream, receipt = receipts[0]
+        loser_stream = conflicts[0][0]
+        assert winner_stream != loser_stream
+
+        with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
+            persisted = get_receipt(conn, schema=schema, event_id=events[0]["id"])
+            with conn.cursor() as cur:
+                cur.execute(
+                    f'SELECT origin_stream_id::text FROM "{schema}".ingest_stream '
+                    "WHERE origin_stream_id IN (%s, %s)",
+                    streams,
+                )
+                persisted_streams = {row["origin_stream_id"] for row in cur.fetchall()}
+        assert persisted is not None
+        assert persisted.receipt_id == receipt.receipt_id
+        assert persisted_streams == {winner_stream}
+
+
 def test_role_contract_denies_runtime_ddl_and_migration_role_serving(
     postgres_dsn: str,
 ) -> None:

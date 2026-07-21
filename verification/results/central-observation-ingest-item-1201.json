@@ -5,11 +5,11 @@
     "doc_id": "auditctl-vuoro-served-audit-alignment",
     "revision": "git:0751c6a77cacc5a2dd016705a5d2e9756a3216f2"
   },
-  "implementation_sha": "working-tree:item-1201-base-0751c6a77cacc5a2dd016705a5d2e9756a3216f2",
+  "implementation_sha": "sha256:central-implementation-v1:80ec1353c1372f49528d6734dd3103eeee4afbf295fd6135f46fdb48f6d42502",
   "depth": 2,
   "environment": {
     "backend": "disposable-local-postgresql",
-    "isolation": "PostgreSQL READ COMMITTED transactions with per-schema advisory migration locks and per-origin stream row locks",
+    "isolation": "PostgreSQL READ COMMITTED transactions with per-schema advisory migration locks, per-event advisory locks, and per-origin stream row locks",
     "tool_versions": {
       "postgresql": "18.4",
       "python": "3.14.6",
@@ -18,12 +18,13 @@
   },
   "execution": {
     "seed": null,
-    "histories": 7,
+    "histories": 19,
     "bounds": {
       "postgresql_instances": 1,
       "migration_jobs": 2,
       "runtime_uploaders": 2,
       "isolated_schemas": 2,
+      "global_event_id_races": 12,
       "observations_per_stream": 3,
       "read_limit": 100
     },
@@ -38,10 +39,20 @@
       "runtime-ddl-attempt",
       "migration-role-runtime-attempt",
       "future-schema-version",
-      "runtime-role-rotation"
+      "runtime-role-rotation",
+      "concurrent-global-event-id-reuse"
     ]
   },
   "claims": [
+    {
+      "property": "two origin streams racing one global event ID produce one receipt and one owner-level conflict without partial loser state",
+      "result": "concurrency-tested",
+      "evidence": [
+        "12 disposable-PostgreSQL two-thread histories reused one event ID from distinct origin streams",
+        "each history returned exactly one receipt and one IngestConflictError rather than a psycopg UniqueViolation",
+        "the losing origin stream had no persisted stream cursor after transaction rollback"
+      ]
+    },
     {
       "property": "migration jobs serialize per schema, upgrade version 1 data, and retry without reapplying migrations",
       "result": "concurrency-tested",
@@ -89,7 +100,7 @@
       "property": "local SQLite and NDJSON capture/rebuild semantics remain unchanged",
       "result": "example-tested",
       "evidence": [
-        "the complete 51-test suite passed, including dual-write, crash convergence, rebuild, CLI, and publisher tests",
+        "the complete 54-test suite passed, including dual-write, crash convergence, rebuild, CLI, and publisher tests",
         "the served central modules are not imported by auditctl CLI startup"
       ]
     }
@@ -98,7 +109,8 @@
   "notes": [
     "The PostgreSQL instance was created under /tmp and stopped and removed by the test fixture; no shared or production database was addressed.",
     "The first harness runs exposed Nix initdb/postgres share-path resolution and were repaired by invoking resolved store binaries.",
+    "Independent verification found the cross-stream global event-ID race; the correction serializes admission and retains an exact-constraint translation fallback.",
     "HTTP/catalog behaviour, appservice Jobs, backup/restore, and cross-machine tests remain deferred to owner-local follow-up items.",
-    "implementation_sha identifies the governed base plus the item-1201 working tree because this result is committed atomically with the implementation."
+    "implementation_sha is SHA-256 over each UTF-8 relative path, NUL, exact file bytes, and NUL in the sorted auditctl.dispatch.json, central Python/migration asset, and pyproject.toml path set asserted by tests/test_verification_contracts.py. This excludes the evidence packet itself and is reproducible without self-reference."
   ]
 }

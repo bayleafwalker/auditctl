@@ -1,8 +1,18 @@
+import hashlib
 import json
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CENTRAL_IMPLEMENTATION_PATHS = (
+    "auditctl.dispatch.json",
+    "auditctl/central.py",
+    "auditctl/central_migrations/__init__.py",
+    "auditctl/central_migrations/versions/0001_ingest.sql",
+    "auditctl/central_migrations/versions/0002_receipts_and_reads.sql",
+    "auditctl/central_schema.py",
+    "pyproject.toml",
+)
 
 
 def test_dual_write_context_records_convergence_not_atomicity():
@@ -37,3 +47,22 @@ def test_central_ingest_context_keeps_observation_and_authority_separate():
     assert "observations-create-no-authority-state" in packet["invariants"]
     assert "duplicate-upload" in packet["faults"]
     assert packet["bounds"]["read_limit"] == 100
+
+
+def test_central_result_digest_matches_the_packaged_implementation_tree():
+    packet = json.loads(
+        (
+            ROOT / "verification/results/central-observation-ingest-item-1201.json"
+        ).read_text(encoding="utf-8")
+    )
+    digest = hashlib.sha256()
+    assert CENTRAL_IMPLEMENTATION_PATHS == tuple(sorted(CENTRAL_IMPLEMENTATION_PATHS))
+    for relative_path in CENTRAL_IMPLEMENTATION_PATHS:
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update((ROOT / relative_path).read_bytes())
+        digest.update(b"\0")
+
+    assert packet["implementation_sha"] == (
+        f"sha256:central-implementation-v1:{digest.hexdigest()}"
+    )

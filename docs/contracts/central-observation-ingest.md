@@ -32,14 +32,19 @@ metadata, payload, and producer timestamp.
 For one `origin_stream_id`:
 
 1. The runtime inserts or locks the stream cursor row.
-2. An exact retry of an existing `(origin_stream_id, origin_seq)` and record
+2. The runtime takes a transaction advisory lock for the environment schema
+   and global `event_id`, so different origin streams cannot race the event-ID
+   precheck. The exact database event-ID constraint is also translated to the
+   owner-level conflict error as a defensive fallback.
+3. An exact retry of an existing `(origin_stream_id, origin_seq)` and record
    hash returns the original `receipt_id` and increments duplicate telemetry.
-3. Reusing the tuple for different content is a conflict.
-4. Reusing an `event_id` for another origin record is a conflict.
-5. A new observation must equal `highest_contiguous_seq + 1`.
-6. A higher sequence is rejected without partial admission and reports the
+4. Reusing the tuple for different content is a conflict.
+5. Reusing an `event_id` for another origin record is a conflict; the losing
+   stream transaction leaves neither a stream row nor an observation.
+6. A new observation must equal `highest_contiguous_seq + 1`.
+7. A higher sequence is rejected without partial admission and reports the
    expected and received sequence.
-7. The observation, receipt, and cursor advance commit in one PostgreSQL
+8. The observation, receipt, and cursor advance commit in one PostgreSQL
    transaction.
 
 The stream row lock serializes admission for one producer stream. Different

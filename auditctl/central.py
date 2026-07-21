@@ -11,6 +11,7 @@ from .central_schema import require_runtime_compatibility
 from .validation import canonical_payload_json, validate_event_object
 
 MAX_READ_LIMIT = 100
+EVENT_ID_LOCK_NAMESPACE = "auditctl-central-event-id"
 
 
 class IngestError(RuntimeError):
@@ -187,6 +188,15 @@ def _select_receipt_for_update(
     return cur.fetchone()
 
 
+def _is_event_id_unique_violation(exc: BaseException) -> bool:
+    """Recognize only the database constraint owned by the event-ID contract."""
+    diag = getattr(exc, "diag", None)
+    return (
+        getattr(exc, "sqlstate", None) == "23505"
+        and getattr(diag, "constraint_name", None) == "ingest_observation_event_id_key"
+    )
+
+
 def ingest_observation(
     conn: Any, event: dict[str, Any], *, schema: str
 ) -> IngestReceipt:
@@ -200,6 +210,13 @@ def ingest_observation(
     with conn.transaction():
         require_runtime_compatibility(conn, schema=schema)
         with conn.cursor() as cur:
+            # Event IDs are globally unique inside one environment schema. Lock
+            # before touching a stream so two distinct streams cannot both pass
+            # the event-ID precheck and leak a driver-specific unique error.
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"{EVENT_ID_LOCK_NAMESPACE}:{schema}:{item.event_id}",),
+            )
             cur.execute(
                 f"""
                 INSERT INTO "{schema}".ingest_stream (origin_stream_id)
@@ -261,38 +278,45 @@ def ingest_observation(
             if item.origin_seq != expected:
                 raise IngestGapError(item.origin_stream_id, expected, item.origin_seq)
 
-            cur.execute(
-                f"""
-                INSERT INTO "{schema}".ingest_observation (
-                    origin_stream_id, origin_seq, event_id, schema_version,
-                    record_class, event_type, actor, runtime_session_id,
-                    occurred_at, basis_revision, correlation_id, causation_id,
-                    payload, payload_sha256, record_sha256, producer_created_at
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s::jsonb, %s, %s, %s
+            try:
+                cur.execute(
+                    f"""
+                    INSERT INTO "{schema}".ingest_observation (
+                        origin_stream_id, origin_seq, event_id, schema_version,
+                        record_class, event_type, actor, runtime_session_id,
+                        occurred_at, basis_revision, correlation_id, causation_id,
+                        payload, payload_sha256, record_sha256, producer_created_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s::jsonb, %s, %s, %s
+                    )
+                    RETURNING observation_id, ingest_offset, ingested_at
+                    """,
+                    (
+                        item.origin_stream_id,
+                        item.origin_seq,
+                        item.event_id,
+                        item.schema_version,
+                        item.record_class,
+                        item.event_type,
+                        item.actor,
+                        item.runtime_session_id,
+                        item.occurred_at,
+                        item.basis_revision,
+                        item.correlation_id,
+                        item.causation_id,
+                        canonical_payload_json(item.payload),
+                        item.payload_sha256,
+                        item.record_sha256,
+                        item.producer_created_at,
+                    ),
                 )
-                RETURNING observation_id, ingest_offset, ingested_at
-                """,
-                (
-                    item.origin_stream_id,
-                    item.origin_seq,
-                    item.event_id,
-                    item.schema_version,
-                    item.record_class,
-                    item.event_type,
-                    item.actor,
-                    item.runtime_session_id,
-                    item.occurred_at,
-                    item.basis_revision,
-                    item.correlation_id,
-                    item.causation_id,
-                    canonical_payload_json(item.payload),
-                    item.payload_sha256,
-                    item.record_sha256,
-                    item.producer_created_at,
-                ),
-            )
+            except Exception as exc:
+                if _is_event_id_unique_violation(exc):
+                    raise IngestConflictError(
+                        "event_id already identifies a different origin record"
+                    ) from exc
+                raise
             observation = cur.fetchone()
             assert observation is not None
             cur.execute(
