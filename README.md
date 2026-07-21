@@ -44,6 +44,13 @@ Publisher integrations use the documented CLI-only boundary in
 [`docs/contracts/publisher-subprocess.md`](docs/contracts/publisher-subprocess.md).
 They never import auditctl internals or write one store directly.
 
+The optional served-audit substrate remains separate from local capture.
+[`docs/contracts/central-observation-ingest.md`](docs/contracts/central-observation-ingest.md)
+defines its observation-only PostgreSQL and receipt semantics, while
+[`docs/operations/central-schema-migrations.md`](docs/operations/central-schema-migrations.md)
+documents explicit deployment migration and compatibility commands. Normal
+`auditctl` startup never connects to or migrates the central schema.
+
 ## Git Hooks
 
 Example hook scripts live in `hooks/`. Repos may copy or symlink them. V1 does not manage hook installation globally.

@@ -10,12 +10,17 @@ dependencies = ["click>=8.1"]
 
 [project.scripts]
 auditctl = "auditctl.cli:cli"
+auditctl-central-schema = "auditctl.central_schema:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+central = ["psycopg[binary]>=3.2,<4"]
+dev = ["pytest>=8", "psycopg[binary]>=3.2,<4"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["auditctl*"]
+
+[tool.setuptools.package-data]
+"auditctl.central_migrations" = ["versions/*.sql"]

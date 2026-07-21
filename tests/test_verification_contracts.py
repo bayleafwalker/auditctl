@@ -24,3 +24,16 @@ def test_protocol_document_rejects_cross_store_atomicity_claim():
     assert "A successful response promises both copies" in protocol
     assert "This prevents a restart from assigning" in protocol
     assert "tuple to a different event" in protocol
+
+
+def test_central_ingest_context_keeps_observation_and_authority_separate():
+    packet = json.loads(
+        (ROOT / "verification/contexts/central-observation-ingest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert packet["depth"] == 2
+    assert "observations-create-no-authority-state" in packet["invariants"]
+    assert "duplicate-upload" in packet["faults"]
+    assert packet["bounds"]["read_limit"] == 100

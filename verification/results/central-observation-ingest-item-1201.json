@@ -1,0 +1,104 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "auditctl.central-observation-ingest",
+  "contract_ref": {
+    "doc_id": "auditctl-vuoro-served-audit-alignment",
+    "revision": "git:0751c6a77cacc5a2dd016705a5d2e9756a3216f2"
+  },
+  "implementation_sha": "working-tree:item-1201-base-0751c6a77cacc5a2dd016705a5d2e9756a3216f2",
+  "depth": 2,
+  "environment": {
+    "backend": "disposable-local-postgresql",
+    "isolation": "PostgreSQL READ COMMITTED transactions with per-schema advisory migration locks and per-origin stream row locks",
+    "tool_versions": {
+      "postgresql": "18.4",
+      "python": "3.14.6",
+      "pytest": "9.1.1"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 7,
+    "bounds": {
+      "postgresql_instances": 1,
+      "migration_jobs": 2,
+      "runtime_uploaders": 2,
+      "isolated_schemas": 2,
+      "observations_per_stream": 3,
+      "read_limit": 100
+    },
+    "faults_exercised": [
+      "concurrent-migration-job",
+      "migration-checksum-drift",
+      "lost-response-before-receipt-observed",
+      "duplicate-upload",
+      "changed-content-under-origin-tuple",
+      "missing-origin-sequence",
+      "concurrent-identical-upload",
+      "runtime-ddl-attempt",
+      "migration-role-runtime-attempt",
+      "future-schema-version",
+      "runtime-role-rotation"
+    ]
+  },
+  "claims": [
+    {
+      "property": "migration jobs serialize per schema, upgrade version 1 data, and retry without reapplying migrations",
+      "result": "concurrency-tested",
+      "evidence": [
+        "two migration connections raced from an empty schema and applied versions (1, 2) exactly once",
+        "a version-1 observation received a stable receipt during version-2 backfill",
+        "a third migration returned no applied versions"
+      ]
+    },
+    {
+      "property": "an exact retry after an unobserved response returns one stable receipt while changed content conflicts",
+      "result": "concurrency-tested",
+      "evidence": [
+        "two runtime connections submitted the same origin record concurrently",
+        "both responses had one receipt ID and exactly one was marked duplicate",
+        "same tuple with a changed canonical record hash raised IngestConflictError"
+      ]
+    },
+    {
+      "property": "a missing origin sequence admits no later observation and exposes the next expected sequence",
+      "result": "example-tested",
+      "evidence": [
+        "sequence 3 after sequence 1 raised IngestGapError(expected=2, received=3)",
+        "stream status remained at next_expected_seq=2 before sequence 2 was admitted"
+      ]
+    },
+    {
+      "property": "runtime and migration principals are separated at both database privilege and compatibility boundaries",
+      "result": "example-tested",
+      "evidence": [
+        "runtime CREATE TABLE in the audit schema failed with PostgreSQL InsufficientPrivilege",
+        "the migration role returned role_kind_mismatch and could not call ingest_observation through the runtime gate",
+        "runtime-role rotation revoked schema usage from the previous principal before the replacement passed compatibility"
+      ]
+    },
+    {
+      "property": "environment schemas retain independent observation histories and bounded reads use ingest offsets",
+      "result": "example-tested",
+      "evidence": [
+        "the same producer record admitted to two schemas received different receipt IDs and independent duplicate counts",
+        "offset-ordered reads returned two observations and limit 101 was rejected"
+      ]
+    },
+    {
+      "property": "local SQLite and NDJSON capture/rebuild semantics remain unchanged",
+      "result": "example-tested",
+      "evidence": [
+        "the complete 51-test suite passed, including dual-write, crash convergence, rebuild, CLI, and publisher tests",
+        "the served central modules are not imported by auditctl CLI startup"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "The PostgreSQL instance was created under /tmp and stopped and removed by the test fixture; no shared or production database was addressed.",
+    "The first harness runs exposed Nix initdb/postgres share-path resolution and were repaired by invoking resolved store binaries.",
+    "HTTP/catalog behaviour, appservice Jobs, backup/restore, and cross-machine tests remain deferred to owner-local follow-up items.",
+    "implementation_sha identifies the governed base plus the item-1201 working tree because this result is committed atomically with the implementation."
+  ]
+}
