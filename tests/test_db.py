@@ -24,6 +24,88 @@ def test_init_db_creates_schema(repo_root: Path) -> None:
         conn.close()
 
 
+class _StubConnection:
+    def __init__(self, wal_error: Exception | None = None) -> None:
+        self.row_factory = None
+        self.wal_error = wal_error
+        self.closed = False
+        self.statements: list[str] = []
+
+    def execute(self, statement: str) -> None:
+        self.statements.append(statement)
+        if statement == "PRAGMA journal_mode = WAL" and self.wal_error is not None:
+            raise self.wal_error
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_connect_retries_busy_wal_initialization_and_closes_failed_connection(
+    repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    busy = sqlite3.OperationalError("database is locked")
+    busy.sqlite_errorcode = sqlite3.SQLITE_BUSY
+    first = _StubConnection(busy)
+    second = _StubConnection()
+    connections = iter((first, second))
+    delays: list[float] = []
+    monkeypatch.setattr(db.sqlite3, "connect", lambda _path: next(connections))
+    monkeypatch.setattr(db.time, "sleep", delays.append)
+
+    connected = db.connect(repo_root / ".auditctl" / "auditctl.db")
+
+    assert connected is second
+    assert first.closed is True
+    assert second.closed is False
+    assert delays == [db._WAL_BUSY_RETRY_DELAYS_SECONDS[0]]
+
+
+def test_connect_stops_after_bounded_busy_wal_retries(
+    repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    failures = []
+    connections = []
+    for _ in range(len(db._WAL_BUSY_RETRY_DELAYS_SECONDS) + 1):
+        busy = sqlite3.OperationalError("database is locked")
+        busy.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        failures.append(busy)
+        connections.append(_StubConnection(busy))
+    pending_connections = iter(connections)
+    delays: list[float] = []
+    monkeypatch.setattr(db.sqlite3, "connect", lambda _path: next(pending_connections))
+    monkeypatch.setattr(db.time, "sleep", delays.append)
+
+    with pytest.raises(sqlite3.OperationalError) as caught:
+        db.connect(repo_root / ".auditctl" / "auditctl.db")
+
+    assert caught.value is failures[-1]
+    assert all(connection.closed for connection in connections)
+    assert delays == list(db._WAL_BUSY_RETRY_DELAYS_SECONDS)
+
+
+def test_connect_propagates_non_busy_wal_error_without_retry(
+    repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    non_busy = sqlite3.OperationalError("not a busy failure")
+    non_busy.sqlite_errorcode = sqlite3.SQLITE_READONLY
+    failed = _StubConnection(non_busy)
+    connect_calls = 0
+
+    def failing_connect(_path: str) -> _StubConnection:
+        nonlocal connect_calls
+        connect_calls += 1
+        return failed
+
+    monkeypatch.setattr(db.sqlite3, "connect", failing_connect)
+
+    with pytest.raises(sqlite3.OperationalError) as caught:
+        db.connect(repo_root / ".auditctl" / "auditctl.db")
+
+    assert caught.value is non_busy
+    assert connect_calls == 1
+    assert failed.closed is True
+
+
 def test_origin_allocation_rolls_back_with_the_caller_transaction(repo_root: Path) -> None:
     conn = db.connect(repo_root / ".auditctl" / "auditctl.db")
     try:

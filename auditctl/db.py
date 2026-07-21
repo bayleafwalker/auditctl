@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Iterable
@@ -68,14 +69,29 @@ def _migration_2(conn: sqlite3.Connection) -> None:
 
 _MIGRATIONS = [_migration_1, _migration_2]
 
+_WAL_BUSY_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.04, 0.08)
+
 
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    return conn
+    for attempt in range(len(_WAL_BUSY_RETRY_DELAYS_SECONDS) + 1):
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+        except Exception as exc:
+            conn.close()
+            is_busy = (
+                isinstance(exc, sqlite3.OperationalError)
+                and getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY
+            )
+            if not is_busy or attempt == len(_WAL_BUSY_RETRY_DELAYS_SECONDS):
+                raise
+            time.sleep(_WAL_BUSY_RETRY_DELAYS_SECONDS[attempt])
+            continue
+        return conn
+    raise AssertionError("unreachable WAL initialization retry state")
 
 
 def init_db(conn: sqlite3.Connection) -> None:

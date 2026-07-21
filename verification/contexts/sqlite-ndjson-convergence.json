@@ -5,7 +5,7 @@
   "subject": "audit-event",
   "contract_ref": {
     "doc_id": "auditctl.audit-write-and-rebuild",
-    "revision": "git:aca143b"
+    "revision": "git:189f7582d3393336a01875f4bade6609bb97ec87"
   },
   "source_of_truth": "sqlite-index-plus-ndjson-recovery-shards",
   "depth": 2,
@@ -13,17 +13,20 @@
   "actors": ["publisher-a", "publisher-b", "rebuilder"],
   "initial_state": ["event id absent from sqlite", "event id absent from shard"],
   "operations": [
-    { "name": "add", "actors": ["publisher-a", "publisher-b"], "synchronization": "barrier-before-shard-lock" },
+    { "name": "connect", "actors": ["publisher-a", "publisher-b"], "synchronization": "barrier-before-simultaneous-fresh-database-open" },
+    { "name": "add", "actors": ["publisher-a", "publisher-b"], "synchronization": "sqlite-writer-lock-plus-shard-lock" },
     { "name": "restart-add", "actors": ["publisher-a"], "synchronization": "after-ndjson-fsync-before-sqlite-commit" },
     { "name": "rebuild", "actors": ["rebuilder"], "synchronization": "after-injected-crash" }
   ],
   "consistency": { "target": "projection-convergence", "object": "event-id-across-sqlite-and-ndjson" },
   "assumptions": { "isolation": "sqlite-begin-immediate-plus-flock", "clock": "event-timestamp-provided-or-process-clock", "fairness": "none" },
-  "bounds": { "publishers": 8, "events": 64, "rebuilds": 2 },
+  "bounds": { "histories": 16, "publishers_per_history": 8, "events_per_history": 8, "rebuilds": 2 },
   "invariants": [
     "successful-response-has-both-copies",
     "reported-append-failure-has-no-committed-sqlite-row",
     "completed-concurrent-appends-produce-complete-lines",
+    "bounded-sqlite-busy-during-wal-initialization-does-not-fail-a-completed-add",
+    "non-busy-wal-initialization-errors-propagate-without-retry",
     "rebuild-deduplicates-by-event-id",
     "one-origin-stream-is-durable-across-processes-and-restart",
     "origin-sequences-are-unique-and-gap-free-for-valid-local-records",
@@ -31,12 +34,13 @@
     "legacy-events-without-envelope-fields-remain-rebuildable"
   ],
   "faults": [
+    "sqlite-busy-during-concurrent-wal-initialization",
     "append-error-before-fsync",
     "crash-after-ndjson-fsync-before-sqlite-commit",
     "sqlite-commit-error-after-append",
     "partial-final-line"
   ],
-  "oracles": ["event-id-set-comparison", "origin-tuple-uniqueness-query", "stream-sequence-contiguity", "ndjson-parse", "sqlite-invariant-query", "rebuild-idempotency"],
-  "implementation_anchors": ["auditctl/cli.py:add_cmd", "auditctl/cli.py:_reconcile_shards_before_allocation", "auditctl/db.py:allocate_origin", "auditctl/db.py:observe_origin", "auditctl/ndjson.py:append_event", "auditctl/cli.py:rebuild_cmd", "tests/test_dual_write.py:test_restart_reconciles_fsynced_ndjson_before_reusing_sequence"],
+  "oracles": ["child-exception-diagnostics", "event-id-set-comparison", "origin-tuple-uniqueness-query", "stream-sequence-contiguity", "ndjson-parse", "sqlite-invariant-query", "rebuild-idempotency"],
+  "implementation_anchors": ["auditctl/cli.py:add_cmd", "auditctl/cli.py:_reconcile_shards_before_allocation", "auditctl/db.py:connect", "auditctl/db.py:allocate_origin", "auditctl/db.py:observe_origin", "auditctl/ndjson.py:append_event", "auditctl/cli.py:rebuild_cmd", "tests/test_dual_write.py:test_concurrent_writers_produce_complete_lines", "tests/test_dual_write.py:test_restart_reconciles_fsynced_ndjson_before_reusing_sequence"],
   "expansions": ["semantic-doc", "stateful-test", "concurrent-history", "fault-scenario"]
 }

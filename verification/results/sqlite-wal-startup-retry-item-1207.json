@@ -1,0 +1,81 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "auditctl.event.sqlite-ndjson-convergence",
+  "contract_ref": {
+    "doc_id": "auditctl.audit-write-and-rebuild",
+    "revision": "git:189f7582d3393336a01875f4bade6609bb97ec87"
+  },
+  "implementation_sha": "sha256:ac7a2a6e90c75e6c94e70f93e8ae8634c1c526570e01c6f7094acf80770db3d0",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary-local-sqlite-and-filesystem-ndjson",
+    "isolation": "fresh SQLite database and artifact root per history; eight separate forked writer processes synchronized before add",
+    "tool_versions": {
+      "python": "3.14.6",
+      "sqlite": "3.53.1",
+      "pytest": "9.1.1"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 32,
+    "bounds": {
+      "runs": 2,
+      "fresh_database_histories_per_run": 16,
+      "writers_per_history": 8,
+      "child_add_attempts": 256,
+      "wal_busy_retry_delays_seconds": "0.01,0.02,0.04,0.08"
+    },
+    "faults_exercised": [
+      "sqlite-busy-during-concurrent-wal-initialization",
+      "non-busy-wal-initialization-error"
+    ]
+  },
+  "claims": [
+    {
+      "property": "simultaneous writers opening a fresh SQLite database tolerate bounded SQLITE_BUSY during WAL initialization",
+      "result": "concurrency-tested",
+      "evidence": [
+        "two foreground executions each completed 16 fresh-database histories with eight barrier-synchronized child writers",
+        "all 256 child add attempts completed without a child exception or nonzero exit"
+      ]
+    },
+    {
+      "property": "every failed WAL initialization connection is closed and only SQLITE_BUSY is retried within the fixed bound",
+      "result": "example-tested",
+      "evidence": [
+        "unit tests observed the failed connection close before a successful retry",
+        "unit tests exhausted exactly five connection attempts and the four declared backoff delays",
+        "a SQLITE_READONLY-tagged OperationalError propagated unchanged after one attempt"
+      ]
+    },
+    {
+      "property": "successful concurrent histories retain complete NDJSON lines, one origin stream, and contiguous unique origin sequences",
+      "result": "concurrency-tested",
+      "evidence": [
+        "each fresh history contained exactly eight separately parseable event lines",
+        "each history used one origin_stream_id and origin_seq values 1 through 8"
+      ]
+    },
+    {
+      "property": "the bounded connection-startup repair preserves the wider auditctl contract",
+      "result": "example-tested",
+      "evidence": [
+        "the complete 66-test suite passed in one foreground invocation with no skips",
+        "the dependency-free verification artifact and dispatch manifest gate passed"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Before the repair, synchronized fresh-database history 7 produced sqlite3.OperationalError database is locked with sqlite_errorcode 5 SQLITE_BUSY in one child.",
+      "trace_ref": "sprintctl:auditctl:item-1202:event-1321",
+      "seed": null
+    }
+  ],
+  "notes": [
+    "The retry is confined to PRAGMA journal_mode=WAL and does not retry a whole add command, transaction, test, or event allocation operation.",
+    "Child outcomes carry formatted exception traces back to the parent, so a failed process is not represented only by an exit code.",
+    "implementation_sha is SHA-256 over the exact stdout of sha256sum for auditctl/db.py, tests/test_db.py, tests/test_dual_write.py, and verification/contexts/sqlite-ndjson-convergence.json in that order; this evidence packet is excluded to avoid self-reference."
+  ]
+}
