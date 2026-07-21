@@ -14,7 +14,7 @@
   "initial_state": ["empty isolated audit schema", "producer observation remains in local NDJSON"],
   "operations": [
     {"name": "migrate", "actors": ["migration-job-a", "migration-job-b"], "synchronization": "per-schema-postgresql-advisory-transaction-lock"},
-    {"name": "ingest", "actors": ["runtime-uploader-a", "runtime-uploader-b"], "synchronization": "origin-stream-row-lock"},
+    {"name": "ingest", "actors": ["runtime-uploader-a", "runtime-uploader-b"], "synchronization": "schema-scoped-event-advisory-lock-before-origin-stream-row-lock"},
     {"name": "receipt-lookup", "actors": ["runtime-uploader-a"], "synchronization": "after-lost-response"},
     {"name": "bounded-read", "actors": ["runtime-uploader-a"], "synchronization": "after-ingest-offset"}
   ],

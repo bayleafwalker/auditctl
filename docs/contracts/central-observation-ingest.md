@@ -31,11 +31,14 @@ metadata, payload, and producer timestamp.
 
 For one `origin_stream_id`:
 
-1. The runtime inserts or locks the stream cursor row.
-2. The runtime takes a transaction advisory lock for the environment schema
-   and global `event_id`, so different origin streams cannot race the event-ID
-   precheck. The exact database event-ID constraint is also translated to the
-   owner-level conflict error as a defensive fallback.
+1. Before touching origin-stream state, the runtime takes a transaction
+   advisory lock scoped to the environment schema and global `event_id`. This
+   serializes different origin streams competing for that event identity, so
+   the loser observes the committed winner during its precheck without first
+   creating a stream cursor. The exact database event-ID constraint is also
+   translated to the owner-level conflict error as a defensive fallback.
+2. The runtime then inserts or locks the origin-stream cursor row. This second
+   lock serializes sequence admission within that producer stream.
 3. An exact retry of an existing `(origin_stream_id, origin_seq)` and record
    hash returns the original `receipt_id` and increments duplicate telemetry.
 4. Reusing the tuple for different content is a conflict.
@@ -47,10 +50,13 @@ For one `origin_stream_id`:
 8. The observation, receipt, and cursor advance commit in one PostgreSQL
    transaction.
 
-The stream row lock serializes admission for one producer stream. Different
-streams and different environment schemas remain independent. A caller whose
-response is interrupted has an unknown response outcome, but retrying the same
-record yields the stable receipt rather than a second observation.
+The synchronization order is therefore schema-scoped event advisory lock,
+then origin-stream row lock. The first protects global event identity across
+streams; the second protects contiguous sequence admission within one stream.
+Different event IDs, streams, and environment schemas remain independent. A
+caller whose response is interrupted has an unknown response outcome, but
+retrying the same record yields the stable receipt rather than a second
+observation.
 
 ## Read contract
 
