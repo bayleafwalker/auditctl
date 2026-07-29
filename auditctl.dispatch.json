@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "repo_id": "auditctl",
+  "authority_repo_uuid": "6251ae2f-b93a-4f5b-80fe-a5b87fc2670f",
   "adoption_level": "guidance-only",
   "routing": {
     "default_harness": "codex",
