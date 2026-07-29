@@ -10,7 +10,7 @@ import click
 
 from . import db
 from .ids import new_event_id
-from .ndjson import append_event, read_events, resolve_inputs
+from .ndjson import ImportInputError, append_event, read_events, resolve_inputs
 from .paths import require_artifacts_root, resolve_paths, shard_path
 from .render import render_text
 from .validation import (
@@ -237,6 +237,8 @@ def rebuild_cmd(from_ndjson, replace, dry_run) -> None:
         # This is intentionally before --replace moves the current DB.  A rejected
         # batch is read-only with respect to its source, destination, and cursor.
         db.validate_import_batch(paths.db_path, events, against_existing=not replace)
+    except (ImportInputError, db.ImportValidationError) as exc:
+        raise click.ClickException(f"rebuild rejected [{exc.code}]") from exc
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 

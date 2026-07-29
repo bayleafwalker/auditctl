@@ -10,6 +10,43 @@ from typing import Iterator
 from .validation import canonical_json, validate_event_object
 
 
+class ImportInputError(ValueError):
+    """A safe, stable classification for rejected rebuild input."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def _validation_code(raw: object) -> str:
+    if not isinstance(raw, dict):
+        return "malformed_record"
+    envelope_fields = {
+        "event_id",
+        "schema_version",
+        "record_class",
+        "origin_stream_id",
+        "origin_seq",
+        "event_type",
+        "runtime_session_id",
+        "occurred_at",
+        "basis_revision",
+        "correlation_id",
+        "causation_id",
+        "payload",
+        "payload_sha256",
+    }
+    if envelope_fields & set(raw):
+        if envelope_fields - set(raw):
+            return "malformed_envelope"
+        if raw.get("schema_version") != 1:
+            return "unsupported_schema"
+        if raw.get("record_class") != "observation":
+            return "unsupported_record_class"
+        return "malformed_envelope"
+    return "malformed_record"
+
+
 def append_event(path: Path, event: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o664)
@@ -36,17 +73,21 @@ def resolve_inputs(raw_path: str) -> list[Path]:
 
 def read_events(paths: list[Path]) -> Iterator[dict]:
     for path in paths:
-        with path.open("r", encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    raw = json.loads(stripped)
-                except json.JSONDecodeError as exc:
-                    raise ValueError(f"{path}:{line_number}: invalid JSON: {exc.msg}") from exc
-                try:
-                    yield validate_event_object(raw)
-                except ValueError as exc:
-                    raise ValueError(f"{path}:{line_number}: {exc}") from exc
-
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        raw = json.loads(stripped)
+                    except json.JSONDecodeError as exc:
+                        raise ImportInputError("corrupt_shard") from exc
+                    try:
+                        yield validate_event_object(raw)
+                    except (TypeError, ValueError) as exc:
+                        raise ImportInputError(_validation_code(raw)) from exc
+        except FileNotFoundError as exc:
+            raise ImportInputError("missing_shard") from exc
+        except OSError as exc:
+            raise ImportInputError("unreadable_shard") from exc

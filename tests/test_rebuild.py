@@ -123,19 +123,19 @@ def _tree_bytes(root: Path) -> dict[Path, bytes]:
 
 
 @pytest.mark.parametrize(
-    "case",
+    "case, expected_code",
     [
-        "malformed_envelope",
-        "unsupported_schema",
-        "unsupported_class",
-        "incompatible_duplicate",
-        "origin_discontinuity",
-        "corrupt_shard",
-        "missing_shard",
+        ("malformed_envelope", "malformed_envelope"),
+        ("unsupported_schema", "unsupported_schema"),
+        ("unsupported_class", "unsupported_record_class"),
+        ("incompatible_duplicate", "incompatible_duplicate_identity"),
+        ("origin_discontinuity", "origin_discontinuity"),
+        ("corrupt_shard", "corrupt_shard"),
+        ("missing_shard", "missing_shard"),
     ],
 )
 def test_rebuild_rejects_whole_batch_without_mutating_ledger_or_sources(
-    repo_root: Path, tmp_path: Path, case: str
+    repo_root: Path, tmp_path: Path, case: str, expected_code: str
 ) -> None:
     runner = CliRunner()
     seeded = runner.invoke(
@@ -199,6 +199,7 @@ def test_rebuild_rejects_whole_batch_without_mutating_ledger_or_sources(
     result = runner.invoke(cli, ["rebuild", "--from-ndjson", str(source), "--replace"])
 
     assert result.exit_code != 0
+    assert f"rebuild rejected [{expected_code}]" in result.output
     assert db_path.read_bytes() == before_db
     assert _tree_bytes(tmp_path) == before_sources
     conn = db.connect(db_path)
