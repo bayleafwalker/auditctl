@@ -195,7 +195,7 @@ def test_import_rejects_origin_tuple_reuse_by_a_different_event(repo_root: Path)
     )
     try:
         db.init_db(conn)
-        with pytest.raises(sqlite3.IntegrityError, match="origin_stream_id, audit_event.origin_seq"):
+        with pytest.raises(db.ImportValidationError, match="origin_discontinuity"):
             db.import_events(conn, [first, conflicting])
         assert db.query_events(conn) == []
     finally:

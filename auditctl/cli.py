@@ -234,7 +234,10 @@ def rebuild_cmd(from_ndjson, replace, dry_run) -> None:
         if not input_paths:
             raise ValueError("no NDJSON shards matched")
         events = list(read_events(input_paths))
-    except ValueError as exc:
+        # This is intentionally before --replace moves the current DB.  A rejected
+        # batch is read-only with respect to its source, destination, and cursor.
+        db.validate_import_batch(paths.db_path, events, against_existing=not replace)
+    except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     if dry_run:
