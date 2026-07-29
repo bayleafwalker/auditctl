@@ -33,3 +33,11 @@ Do not describe SQLite and NDJSON as one atomic transaction. Successful response
 Verification must use temporary repositories and artifact roots, record injected fault points, and never publish test events into shared workspace artifacts.
 
 The machine-readable routing and hook policy is `auditctl.dispatch.json`. Validate reusable packets with `python /projects/dev/agentops/templates/dispatch/scripts/validate_verification_artifacts.py --root .`.
+
+<!-- agentops-project-pointer:start -->
+See `.agents/project.generated.md` for cross-repo project context (agentops-managed; do not hand-edit).
+<!-- agentops-project-pointer:end -->
+
+<!-- agentops-environment-pointer:start -->
+See `.agents/environment.generated.md` for the active Vuoro environment's constraints and runbooks (agentops-managed; do not hand-edit).
+<!-- agentops-environment-pointer:end -->
