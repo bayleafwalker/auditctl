@@ -74,15 +74,29 @@ Shard append uses an exclusive advisory file lock, append mode, one encoded line
 
 ## Rebuild
 
-Rebuild validates all input events and imports by stable event ID. Duplicate IDs are skipped, making repeated import idempotent. `--replace` backs up the current database before importing; it does not rewrite source shards.
+Rebuild preflights the complete input batch before opening a writer transaction
+or, with `--replace`, moving the destination database. Rejection is typed and
+fail-closed: unsupported envelope schema or class, malformed envelope, corrupt
+or missing shard, origin-stream discontinuity, and an incompatible reuse of an
+event ID reject the entire batch. Rejection does not import a prefix, advance a
+cursor, write a receipt or quarantine record, coerce a record, alter a source
+shard, or replace the destination database.
+
+An exact canonical retry of an existing event ID is the sole duplicate that is
+skipped. A same ID with any persisted record difference is not a retry. Legacy
+records with no envelope fields remain an explicitly supported rebuild path and
+do not participate in producer-stream cursor advancement. `--replace` backs up
+the current database only after the input has passed an empty-ledger preflight;
+it never rewrites source shards.
 
 ## Safety properties
 
 - Successful `add` returns only after SQLite commit and NDJSON fsync.
 - Reported NDJSON append failure does not leave a committed SQLite row.
 - Concurrent completed append operations do not interleave JSON lines.
-- Valid duplicate IDs do not create duplicate SQLite rows during rebuild.
+- Only exact canonical duplicate IDs do not create duplicate SQLite rows during rebuild.
 - Invalid JSON or invalid event shape fails visibly with a shard and line reference.
+- Every rejected rebuild leaves the destination rows/cursor and source shards unchanged.
 - New observations have one durable stream identity and unique, gap-free local sequences.
 - Restart after an NDJSON-ahead crash reconciles the old sequence before allocation.
 

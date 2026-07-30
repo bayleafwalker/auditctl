@@ -10,6 +10,14 @@ from typing import Any, Iterable
 from .validation import canonical_json
 
 
+class ImportValidationError(ValueError):
+    """A typed, fail-closed rejection of an NDJSON import batch."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(f"{code}: {message}")
+
+
 def _migration_1(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
@@ -276,6 +284,130 @@ def _row_to_event(row: sqlite3.Row) -> dict[str, Any]:
     return event
 
 
+def _canonical_import_record(event: dict[str, Any]) -> str:
+    """The complete record representation that the local ledger persists."""
+    record = {
+        "id": event["id"],
+        "ts": event["ts"],
+        "type": event["type"],
+        "actor": event["actor"],
+        "summary": event["summary"],
+        "detail": event.get("detail"),
+        "refs": event["refs"],
+        "source": event["source"],
+        "metadata": event["metadata"],
+        "created_at": event["created_at"],
+    }
+    if event.get("origin_stream_id") is not None:
+        record.update(
+            {
+                key: event[key]
+                for key in (
+                    "event_id",
+                    "schema_version",
+                    "record_class",
+                    "origin_stream_id",
+                    "origin_seq",
+                    "event_type",
+                    "runtime_session_id",
+                    "occurred_at",
+                    "basis_revision",
+                    "correlation_id",
+                    "causation_id",
+                    "payload",
+                    "payload_sha256",
+                )
+            }
+        )
+    return canonical_json(record)
+
+
+def _deduplicate_batch(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only exact canonical retries; reject every identity collision."""
+    unique: list[dict[str, Any]] = []
+    by_id: dict[str, str] = {}
+    for event in events:
+        canonical = _canonical_import_record(event)
+        previous = by_id.get(event["id"])
+        if previous is None:
+            by_id[event["id"]] = canonical
+            unique.append(event)
+        elif previous != canonical:
+            raise ImportValidationError(
+                "incompatible_duplicate_identity",
+                f"event_id {event['id']} has more than one canonical record",
+            )
+    return unique
+
+
+def _validate_import_batch(conn: sqlite3.Connection, events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Validate the complete import before inserting a row or advancing an origin."""
+    unique = _deduplicate_batch(events)
+    existing: dict[str, dict[str, Any]] = {}
+    for event in unique:
+        row = conn.execute("SELECT * FROM audit_event WHERE id = ?", (event["id"],)).fetchone()
+        if row is not None:
+            existing[event["id"]] = _row_to_event(row)
+            if _canonical_import_record(existing[event["id"]]) != _canonical_import_record(event):
+                raise ImportValidationError(
+                    "incompatible_duplicate_identity",
+                    f"event_id {event['id']} does not match the persisted canonical record",
+                )
+
+    stream = conn.execute(
+        "SELECT origin_stream_id, next_origin_seq FROM producer_stream WHERE singleton = 1"
+    ).fetchone()
+    stream_id = str(stream["origin_stream_id"]) if stream is not None else None
+    expected_seq = int(stream["next_origin_seq"]) if stream is not None else 1
+    for event in unique:
+        if event.get("origin_stream_id") is None:
+            continue  # Explicitly supported legacy, no-envelope records.
+        if stream_id is not None and event["origin_stream_id"] != stream_id:
+            raise ImportValidationError(
+                "origin_discontinuity",
+                "NDJSON origin stream differs from the local audit ledger",
+            )
+        if event["id"] in existing:
+            continue  # Exact canonical retry; it cannot advance the cursor.
+        if event["origin_seq"] != expected_seq:
+            raise ImportValidationError(
+                "origin_discontinuity",
+                f"expected origin_seq {expected_seq}, got {event['origin_seq']}",
+            )
+        stream_id = str(event["origin_stream_id"])
+        expected_seq += 1
+    return unique
+
+
+def validate_import_batch(
+    db_path: Path, events: Iterable[dict[str, Any]], *, against_existing: bool = True
+) -> None:
+    """Read-only preflight used before rebuild may replace its destination DB."""
+    unique = _deduplicate_batch(events)
+    if not against_existing or not db_path.exists():
+        # Validate against an empty ledger without creating the destination.
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        init_db(conn)
+        try:
+            _validate_import_batch(conn, unique)
+        finally:
+            conn.close()
+        return
+    # immutable=1 prevents SQLite from creating WAL/SHM sidecars during the
+    # rejection preflight.  The subsequent writer transaction revalidates to
+    # close the ordinary local-writer race.
+    uri = f"file:{db_path}?mode=ro&immutable=1"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        _validate_import_batch(conn, unique)
+    except sqlite3.Error as exc:
+        raise ImportValidationError("destination_unreadable", str(exc)) from exc
+    finally:
+        conn.close()
+
+
 def query_events(
     conn: sqlite3.Connection,
     *,
@@ -313,15 +445,26 @@ def query_events(
 
 
 def import_events(conn: sqlite3.Connection, events: Iterable[dict[str, Any]]) -> tuple[int, int]:
+    batch = list(events)
     imported = 0
-    skipped = 0
+    skipped = len(batch) - len(_deduplicate_batch(batch))
     conn.execute("BEGIN IMMEDIATE")
     try:
-        for event in events:
+        unique = _validate_import_batch(conn, batch)
+        existing_ids = {
+            event["id"]
+            for event in unique
+            if conn.execute("SELECT 1 FROM audit_event WHERE id = ?", (event["id"],)).fetchone()
+            is not None
+        }
+        for event in unique:
+            if event["id"] in existing_ids:
+                skipped += 1
+                continue
             if insert_event_ignore(conn, event):
                 imported += 1
             else:
-                skipped += 1
+                raise AssertionError("validated import unexpectedly lost an event identity race")
             observe_origin(conn, event)
         conn.commit()
     except Exception:
