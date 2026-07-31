@@ -1,5 +1,6 @@
 ---
 doc_id: auditctl.publisher-subprocess
+contract_version: 2
 status: adopted
 supersedes: null
 ---
@@ -153,6 +154,50 @@ publisher contract, not a per-event-type schema enforced inside
 and typed-ref grammar for every event type uniformly and leaves domain-shaped
 metadata requirements to the publisher and its own tests.
 
+## Actionq review-result mapping
+
+This section versions the publisher boundary used to record an independently
+completed candidate or integration review. It does not make auditctl an
+approval authority and does not move review findings into the audit ledger.
+
+The event type is `candidate.reviewed`, `source` is `actionq-review`, and the
+top-level `actor` is the authenticated review identity that performed the
+review. The event always has `sha:<reviewed-git-commit>` as a ref. It also has
+the applicable `wi:<work_item_id>` and `sprint:<sprint_id>` refs when those
+contexts are present and valid. Publishers must not invent placeholder work or
+sprint refs when the context is absent.
+
+Required metadata is exactly:
+
+- `action_id`;
+- `attempt_id`;
+- `plan_ref`;
+- `subject_kind`, either `candidate` or `integration`;
+- `publication_ref`;
+- `verification_result_ref`;
+- `review_result_artifact_ref`;
+- `topology`;
+- `findings_digest`;
+- `review_outcome`, either `no-findings` or `findings-recorded`;
+- `runtime_session_id` when a runtime session exists.
+
+The metadata has no approval, acceptance, merge, or release field. Full review
+findings remain in the immutable external artifact named by
+`review_result_artifact_ref`; the audit event contains only its reference and
+`findings_digest`. Summary and detail must remain bounded and redacted and must
+not reproduce findings, credentials, receipts, prompts, transcripts, or raw
+runner output.
+
+Emission follows creation of the immutable review-result artifact. A missing
+binary, timeout, signal, or nonzero auditctl exit does not alter that result.
+The publisher performs no blind retry because each `auditctl add` invocation
+mints a new event ID. Before retrying it reconciles by `source=actionq-review`,
+type `candidate.reviewed`, `action_id`, `attempt_id`, `plan_ref`,
+`subject_kind`, `publication_ref`, `verification_result_ref`, and
+`review_result_artifact_ref`. It retries only when that observation is absent.
+This makes publisher retry idempotent at the reconciliation boundary; it does
+not make auditctl insertion exactly once.
+
 ## Evidence and compatibility
 
 Sprintctl's current source and unit histories are pinned on auditctl work item
@@ -174,5 +219,6 @@ for `session.started`, `session.ended`, `session.end-inferred`, and
 its own call-site tests are out of scope for this item.
 
 Adding an event type or changing required metadata is a versioned contract
-change. Existing event types, typed refs, and the warn-only failure posture are
-backward-compatible requirements for the v1 publishers.
+change. Version 2 adds `candidate.reviewed`. Existing event types, typed refs,
+and the warn-only failure posture remain backward-compatible requirements from
+version 1.
