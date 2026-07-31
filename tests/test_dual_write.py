@@ -116,6 +116,83 @@ def test_ndjson_failure_rolls_back_sqlite(repo_root: Path, monkeypatch) -> None:
         conn.close()
 
 
+def test_short_write_is_completed_without_a_partial_ndjson_line(
+    repo_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    real_write = ndjson.os.write
+    writes = 0
+
+    def short_then_complete(fd, data):
+        nonlocal writes
+        writes += 1
+        if writes == 1:
+            return real_write(fd, data[:7])
+        return real_write(fd, data)
+
+    monkeypatch.setattr(ndjson.os, "write", short_then_complete)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "add",
+            "--type",
+            "commit",
+            "--actor",
+            "tester",
+            "--summary",
+            "short write",
+            "--ts",
+            "2026-04-26T10:00:00Z",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    lines = shard.read_text().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["summary"] == "short write"
+    assert writes >= 2
+
+
+def test_zero_length_short_write_rolls_back_sqlite(repo_root: Path, monkeypatch) -> None:
+    monkeypatch.setattr(ndjson.os, "write", lambda _fd, _data: 0)
+    result = CliRunner().invoke(
+        cli,
+        ["add", "--type", "commit", "--actor", "tester", "--summary", "cannot write"],
+    )
+
+    assert result.exit_code != 0
+    assert "short write while appending audit event" in result.output
+    conn = sqlite3.connect(repo_root / ".auditctl" / "auditctl.db")
+    try:
+        assert conn.execute("SELECT count(*) FROM audit_event").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_oversized_event_is_rejected_without_a_sqlite_row(repo_root: Path) -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "add",
+            "--type",
+            "commit",
+            "--actor",
+            "tester",
+            "--summary",
+            "x" * ndjson.MAX_EVENT_LINE_BYTES,
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "immutableRef kind=artifact" in result.output
+    assert "_artifacts/<repo_id>/" in result.output
+    conn = sqlite3.connect(repo_root / ".auditctl" / "auditctl.db")
+    try:
+        assert conn.execute("SELECT count(*) FROM audit_event").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
 def test_concurrent_writers_produce_complete_lines(tmp_path: Path) -> None:
     history_count = 16
     process_context = multiprocessing.get_context("fork")

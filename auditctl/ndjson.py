@@ -10,6 +10,12 @@ from typing import Iterator
 from .validation import canonical_json, validate_event_object
 
 
+# Keep individual audit records small enough that the append-only recovery
+# shards remain practical to reconcile.  Large immutable payloads belong in an
+# artifact referenced by the event, not in the ledger line itself.
+MAX_EVENT_LINE_BYTES = 16 * 1024
+
+
 class ImportInputError(ValueError):
     """A safe, stable classification for rejected rebuild input."""
 
@@ -48,12 +54,24 @@ def _validation_code(raw: object) -> str:
 
 
 def append_event(path: Path, event: dict) -> None:
+    line = (canonical_json(event) + "\n").encode("utf-8")
+    if len(line) > MAX_EVENT_LINE_BYTES:
+        raise ValueError(
+            f"audit event exceeds the {MAX_EVENT_LINE_BYTES}-byte canonical NDJSON limit; "
+            "store bulk payloads as an immutableRef kind=artifact under "
+            "_artifacts/<repo_id>/ instead"
+        )
+
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o664)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
-        line = (canonical_json(event) + "\n").encode("utf-8")
-        os.write(fd, line)
+        offset = 0
+        while offset < len(line):
+            written = os.write(fd, line[offset:])
+            if written <= 0:
+                raise OSError("short write while appending audit event")
+            offset += written
         os.fsync(fd)
     finally:
         try:

@@ -30,6 +30,8 @@ def test_dual_write_context_records_convergence_not_atomicity():
     assert packet["schema_version"] == "test-context/v1"
     assert packet["consistency"]["target"] == "projection-convergence"
     assert "crash-after-ndjson-fsync-before-sqlite-commit" in packet["faults"]
+    assert packet["bounds"]["max_canonical_ndjson_line_bytes"] == 16384
+    assert "oversized-event-is-rejected-before-a-shard-append-or-sqlite-commit" in packet["invariants"]
     assert "origin-sequences-are-unique-and-gap-free-for-valid-local-records" in packet["invariants"]
     assert "restart-add" in {operation["name"] for operation in packet["operations"]}
 

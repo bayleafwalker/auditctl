@@ -20,10 +20,11 @@
   ],
   "consistency": { "target": "projection-convergence", "object": "event-id-across-sqlite-and-ndjson" },
   "assumptions": { "isolation": "sqlite-begin-immediate-plus-flock", "clock": "event-timestamp-provided-or-process-clock", "fairness": "none" },
-  "bounds": { "histories": 16, "publishers_per_history": 8, "events_per_history": 8, "rebuilds": 2 },
+  "bounds": { "histories": 16, "publishers_per_history": 8, "events_per_history": 8, "rebuilds": 2, "max_canonical_ndjson_line_bytes": 16384 },
   "invariants": [
     "successful-response-has-both-copies",
     "reported-append-failure-has-no-committed-sqlite-row",
+    "oversized-event-is-rejected-before-a-shard-append-or-sqlite-commit",
     "completed-concurrent-appends-produce-complete-lines",
     "bounded-sqlite-busy-during-wal-initialization-does-not-fail-a-completed-add",
     "non-busy-wal-initialization-errors-propagate-without-retry",
