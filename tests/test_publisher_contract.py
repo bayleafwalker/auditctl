@@ -1,5 +1,8 @@
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 from click.testing import CliRunner
 
@@ -8,6 +11,30 @@ from auditctl.validation import validate_event_object
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _invoke_auditctl_subprocess(
+    repo_root: Path, tmp_path: Path, args: list[str]
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["AUDITCTL_DB"] = str(repo_root / ".auditctl" / "auditctl.db")
+    env["AUDITCTL_ARTIFACTS_ROOT"] = str(tmp_path)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(ROOT), env.get("PYTHONPATH")) if part
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from auditctl.cli import cli; cli()",
+            *args,
+        ],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 
 def test_sprintctl_publisher_contract_closes_mapping_and_failure_posture() -> None:
@@ -350,3 +377,158 @@ def test_session_mechanization_events_survive_rebuild_round_trip(
         "session.capsule-pointer",
     }
     assert all(event["runtime_session_id"] == runtime_session_id for event in rebuilt_events)
+
+
+def test_candidate_reviewed_contract_freezes_exact_mapping_and_retry_posture() -> None:
+    contract = (ROOT / "docs/contracts/publisher-subprocess.md").read_text(encoding="utf-8")
+    normalized = " ".join(contract.split())
+
+    assert "contract_version: 2" in contract
+    assert "`candidate.reviewed`" in contract
+    assert "`source` is `actionq-review`" in normalized
+    assert "authenticated review identity" in normalized
+    assert "`sha:<reviewed-git-commit>`" in contract
+    for field in (
+        "action_id",
+        "attempt_id",
+        "plan_ref",
+        "subject_kind",
+        "publication_ref",
+        "verification_result_ref",
+        "review_result_artifact_ref",
+        "topology",
+        "findings_digest",
+        "review_outcome",
+        "runtime_session_id",
+    ):
+        assert f"`{field}`" in contract
+    assert "either `candidate` or `integration`" in normalized
+    assert "either `no-findings` or `findings-recorded`" in normalized
+    assert "performs no blind retry" in normalized
+    assert "retries only when that observation is absent" in normalized
+    assert "does not make auditctl insertion exactly once" in normalized
+    assert "no approval, acceptance, merge, or release field" in normalized
+
+
+def test_candidate_reviewed_subprocess_emits_exact_redacted_mapping(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    metadata = {
+        "action_id": "action-2035",
+        "attempt_id": "attempt-7",
+        "plan_ref": "artifact:sha256:" + "1" * 64,
+        "subject_kind": "candidate",
+        "publication_ref": "artifact:sha256:" + "2" * 64,
+        "verification_result_ref": "artifact:sha256:" + "3" * 64,
+        "review_result_artifact_ref": "artifact:sha256:" + "4" * 64,
+        "topology": "independent-fresh-context",
+        "findings_digest": "sha256:" + "5" * 64,
+        "review_outcome": "findings-recorded",
+        "runtime_session_id": "review-session-9",
+    }
+    reviewed_commit = "a" * 40
+    result = _invoke_auditctl_subprocess(
+        repo_root,
+        tmp_path,
+        [
+            "add",
+            "--type",
+            "candidate.reviewed",
+            "--source",
+            "actionq-review",
+            "--actor",
+            "reviewer:oidc:subject-17",
+            "--summary",
+            "Independent candidate review recorded",
+            "--ref",
+            f"sha:{reviewed_commit}",
+            "--ref",
+            "wi:2035",
+            "--ref",
+            "sprint:582",
+            "--metadata",
+            json.dumps(metadata, separators=(",", ":")),
+            "--ts",
+            "2026-07-31T12:00:00Z",
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-07-31.ndjson"
+    event = json.loads(shard.read_text(encoding="utf-8"))
+    assert validate_event_object(event) == event
+    assert event["type"] == "candidate.reviewed"
+    assert event["source"] == "actionq-review"
+    assert event["actor"] == "reviewer:oidc:subject-17"
+    assert event["refs"] == [f"sha:{reviewed_commit}", "wi:2035", "sprint:582"]
+    assert event["metadata"] == metadata
+    assert set(event["metadata"]) == set(metadata)
+    assert event["runtime_session_id"] == "review-session-9"
+    serialized = json.dumps(event, sort_keys=True)
+    assert "approval" not in serialized.lower()
+    assert "raw findings" not in serialized.lower()
+    assert "credential" not in serialized.lower()
+
+
+def test_candidate_reviewed_subprocess_blind_retry_demonstrates_reconcile_requirement(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    metadata = {
+        "action_id": "action-2035",
+        "attempt_id": "attempt-8",
+        "plan_ref": "artifact:sha256:" + "6" * 64,
+        "subject_kind": "integration",
+        "publication_ref": "artifact:sha256:" + "7" * 64,
+        "verification_result_ref": "artifact:sha256:" + "8" * 64,
+        "review_result_artifact_ref": "artifact:sha256:" + "9" * 64,
+        "topology": "integration-tip",
+        "findings_digest": "sha256:" + "b" * 64,
+        "review_outcome": "no-findings",
+    }
+    argv = [
+        "add",
+        "--type",
+        "candidate.reviewed",
+        "--source",
+        "actionq-review",
+        "--actor",
+        "reviewer:oidc:subject-18",
+        "--summary",
+        "Independent integration review recorded",
+        "--ref",
+        "sha:" + "c" * 40,
+        "--metadata",
+        json.dumps(metadata, separators=(",", ":")),
+        "--ts",
+        "2026-07-31T12:01:00Z",
+    ]
+
+    first = _invoke_auditctl_subprocess(repo_root, tmp_path, argv)
+    second = _invoke_auditctl_subprocess(repo_root, tmp_path, argv)
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+
+    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-07-31.ndjson"
+    events = [json.loads(line) for line in shard.read_text(encoding="utf-8").splitlines()]
+    assert len(events) == 2
+    assert events[0]["id"] != events[1]["id"]
+    retry_key = (
+        "source",
+        "type",
+        "action_id",
+        "attempt_id",
+        "plan_ref",
+        "subject_kind",
+        "publication_ref",
+        "verification_result_ref",
+        "review_result_artifact_ref",
+    )
+    projected = [
+        (
+            event["source"],
+            event["type"],
+            *(event["metadata"][field] for field in retry_key[2:]),
+        )
+        for event in events
+    ]
+    assert projected[0] == projected[1]
