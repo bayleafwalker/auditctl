@@ -1,0 +1,69 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "auditctl.event.sqlite-ndjson-convergence",
+  "contract_ref": {
+    "doc_id": "auditctl.audit-write-and-rebuild",
+    "revision": "git:189f7582d3393336a01875f4bade6609bb97ec87"
+  },
+  "implementation_sha": "git:3625bfd46b44bdec2b2fe8d8662beb825624ae40",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary-local-sqlite-and-filesystem-ndjson",
+    "isolation": "fresh temporary repositories and artifact roots; concurrent histories use eight forked writers synchronized by a barrier",
+    "tool_versions": {
+      "python": "3.12.12",
+      "pytest": "9.1.1"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 16,
+    "bounds": {
+      "writers_per_history": 8,
+      "max_canonical_ndjson_line_bytes": 16384
+    },
+    "faults_exercised": [
+      "positive-short-os-write",
+      "zero-length-os-write",
+      "append-error-before-fsync",
+      "crash-after-ndjson-fsync-before-sqlite-commit",
+      "sqlite-commit-error-after-append"
+    ]
+  },
+  "claims": [
+    {
+      "property": "a positive short os.write result is completed into one separately parseable canonical NDJSON line before SQLite commit",
+      "result": "example-tested",
+      "evidence": [
+        "test_short_write_is_completed_without_a_partial_ndjson_line simulates a 7-byte first write and verifies the completed line"
+      ]
+    },
+    {
+      "property": "a non-progressing append fails without a committed SQLite event row",
+      "result": "example-tested",
+      "evidence": [
+        "test_zero_length_short_write_rolls_back_sqlite simulates a zero-length os.write result"
+      ]
+    },
+    {
+      "property": "an event whose canonical NDJSON line exceeds 16384 bytes is rejected with the immutable artifact reference alternative and without a committed SQLite event row",
+      "result": "example-tested",
+      "evidence": [
+        "test_oversized_event_is_rejected_without_a_sqlite_row checks both the failure text and SQLite state"
+      ]
+    },
+    {
+      "property": "the existing concurrent append and recovery histories continue to produce complete lines and convergent SQLite state",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/test_dual_write.py executes 16 histories with eight barrier-synchronized forked writers each",
+        "the full suite completed with 67 passed and 9 skipped optional central PostgreSQL integration tests"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "This result does not claim cross-store atomicity. A crash after NDJSON fsync and before SQLite commit remains an NDJSON-ahead recovery case.",
+    "The recorded implementation SHA is the implementation commit; this result packet was added separately to avoid self-reference."
+  ]
+}
