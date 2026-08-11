@@ -98,7 +98,7 @@ events include `pr:<number>` and may include `sha:<commit>` when verified.
 | Harness child PID exists | `session.start` | child PID |
 | Pause/handoff recorded | `session.pause` | pause reason, handoff pointer when present |
 | Session resumed from handoff | `session.resume` | prior session/handoff pointer |
-| Child exit and validation outcome known | `session.exit` | outcome, result, failure reason, validation summary |
+| Child exit and validation outcome known | `session.exit` | outcome, result, failure reason, validation summary, bounded controller result projection |
 | Completed-session branch has an open PR | `pr.open` | PR number, state, branch |
 | PR state is verified merged | `pr.merge` | PR number, state, branch, merge commit when known |
 
@@ -115,6 +115,33 @@ The caller performs no blind retry. Before retrying, it reconciles by
 PR number for PR facts). Auditctl still generates the event and origin IDs.
 The caller may then retry a missing observation, but this bounded reconciliation
 is not an exactly-once guarantee.
+
+For the controller-owned dispatch lifecycle, a `session.exit` publisher may
+also include the following bounded metadata copied from ActionQ's immutable
+`dispatch-result/v1` record:
+
+- `phase`, a non-empty UTF-8 string of at most 32 bytes;
+- `terminal_status`, a non-empty UTF-8 string of at most 64 bytes;
+- `terminal_reason`, one of the safe reason codes `completed`, `process-exit`,
+  `start-failed`, `cancelled`, `timeout`, `usage-limit`, or `crash-inferred`;
+- `dispatch_result_ref` and `dispatch_result_digest`, supplied together as
+  `artifact:sha256:<64 lowercase hex>` and `sha256:<64 lowercase hex>` and
+  identifying the same immutable result.
+
+Auditctl validates only these bounded shapes and the digest/reference pairing.
+It does not dereference the result, decide whether the status is successful,
+settle an action, or mutate ActionQ/Sprintctl state. The fields are retained
+unchanged in both local representations. Existing `session.exit` metadata
+remains compatible, and a failed or not-yet-published dispatch may omit the
+result pair. The bounded contract activates only when either result field is
+non-null. Once active, `action_id`, `session_id`, and `runtime_session_id` are
+required; the two metadata session IDs must match, metadata
+`runtime_session_id` must match the outer observation-envelope field, and the
+outer actor must be exactly `actionq:<runtime_session_id>`. This is the same
+action/session identity used to reconcile an ActionQ publisher retry. A legacy
+event may still contain null or arbitrary values under any metadata key when
+the result pair is omitted; Auditctl preserves those values without
+interpreting them.
 
 ## Session mechanization (Tier-0) mapping
 

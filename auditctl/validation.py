@@ -10,6 +10,27 @@ from typing import Any
 VALID_REF_PREFIXES = ("wi:", "ka:", "ad:", "sha:", "pr:", "sprint:", "capsule:")
 EVENT_ID_RE = re.compile(r"^ad:[0-9A-HJKMNP-TV-Z]{26}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+IMMUTABLE_RESULT_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+IMMUTABLE_RESULT_REF_RE = re.compile(r"^artifact:sha256:[0-9a-f]{64}$")
+ACTIONQ_SESSION_EXIT_BOUNDS = {
+    "phase": 32,
+    "terminal_status": 64,
+    "terminal_reason": 256,
+    "dispatch_result_ref": 128,
+    "dispatch_result_digest": 71,
+}
+ACTIONQ_TERMINAL_REASON_CODES = frozenset(
+    {
+        "completed",
+        "process-exit",
+        "start-failed",
+        "cancelled",
+        "timeout",
+        "usage-limit",
+        "crash-inferred",
+    }
+)
+ACTIONQ_SESSION_ID_MAX_BYTES = 128
 ENVELOPE_FIELDS = {
     "event_id",
     "schema_version",
@@ -61,6 +82,81 @@ def parse_metadata(raw: str | None) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("metadata must be a JSON object")
     return value
+
+
+def validate_actionq_session_exit_metadata(event: dict[str, Any]) -> None:
+    """Validate the activated, bounded ActionQ session-exit result projection."""
+    if event.get("type") != "session.exit" or event.get("source") != "actionq-daemon":
+        return
+
+    metadata = event["metadata"]
+    result_keys = ("dispatch_result_ref", "dispatch_result_digest")
+    # Older session.exit publishers and shards may use any metadata shape,
+    # including nulls under names introduced by this additive contract.  A
+    # non-null result field is the explicit activation boundary.
+    if not any(metadata.get(key) is not None for key in result_keys):
+        return
+
+    required = {
+        "action_id",
+        "session_id",
+        "runtime_session_id",
+        "phase",
+        "terminal_status",
+        "terminal_reason",
+        *result_keys,
+    }
+    missing = sorted(key for key in required if metadata.get(key) is None)
+    if missing:
+        raise ValueError(
+            "activated dispatch-result metadata is missing: " + ", ".join(missing)
+        )
+
+    action_id = metadata["action_id"]
+    if isinstance(action_id, bool) or not isinstance(action_id, int) or action_id < 1:
+        raise ValueError("action_id must be a positive integer when dispatch-result metadata is active")
+
+    session_id = metadata["session_id"]
+    runtime_session_id = metadata["runtime_session_id"]
+    for key, value in (("session_id", session_id), ("runtime_session_id", runtime_session_id)):
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{key} must be a non-empty string when dispatch-result metadata is active")
+        if len(value.encode("utf-8")) > ACTIONQ_SESSION_ID_MAX_BYTES:
+            raise ValueError(f"{key} exceeds the {ACTIONQ_SESSION_ID_MAX_BYTES}-byte bound")
+    if session_id != runtime_session_id:
+        raise ValueError("session_id and runtime_session_id must match when dispatch-result metadata is active")
+    if "event_id" in event and event.get("runtime_session_id") != runtime_session_id:
+        raise ValueError(
+            "metadata.runtime_session_id must match the observation-envelope runtime_session_id"
+        )
+    expected_actor = f"actionq:{runtime_session_id}"
+    if event.get("actor") != expected_actor:
+        raise ValueError(f"actor must equal {expected_actor!r} for activated dispatch-result metadata")
+
+    for key, limit in ACTIONQ_SESSION_EXIT_BOUNDS.items():
+        value = metadata[key]
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{key} must be a non-empty string")
+        if len(value.encode("utf-8")) > limit:
+            raise ValueError(f"{key} exceeds the {limit}-byte bound")
+
+    terminal_reason = metadata["terminal_reason"]
+    if terminal_reason not in ACTIONQ_TERMINAL_REASON_CODES:
+        allowed = ", ".join(sorted(ACTIONQ_TERMINAL_REASON_CODES))
+        raise ValueError(f"terminal_reason must be a recognized safe reason code: {allowed}")
+
+    result_ref = metadata["dispatch_result_ref"]
+    result_digest = metadata["dispatch_result_digest"]
+    if not IMMUTABLE_RESULT_REF_RE.fullmatch(result_ref):
+        raise ValueError(
+            "dispatch_result_ref must be an artifact:sha256:<64 lowercase hex> reference"
+        )
+    if not IMMUTABLE_RESULT_DIGEST_RE.fullmatch(result_digest):
+        raise ValueError(
+            "dispatch_result_digest must be a sha256:<64 lowercase hex> digest"
+        )
+    if result_ref.removeprefix("artifact:") != result_digest:
+        raise ValueError("dispatch result reference and digest must identify the same result")
 
 
 def canonical_json(value: Any) -> str:
@@ -130,6 +226,7 @@ def validate_event_object(event: dict[str, Any]) -> dict[str, Any]:
     validate_refs(event["refs"])
     if not isinstance(event["metadata"], dict):
         raise ValueError("metadata must be an object")
+    validate_actionq_session_exit_metadata(event)
     for key in ("type", "actor", "summary", "source"):
         if not isinstance(event[key], str) or not event[key]:
             raise ValueError(f"{key} must be a non-empty string")

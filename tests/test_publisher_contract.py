@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
 from click.testing import CliRunner
 
 from auditctl.cli import cli
@@ -116,6 +117,9 @@ def test_actionq_contract_freezes_event_set_without_claiming_caller_shipped() ->
     assert "does not claim the daemon or its caller has shipped" in normalized
     assert "Actionq #973 owns that caller" in normalized
     assert "session_id" in contract and "runtime_session_id" in contract
+    assert "dispatch-result/v1" in normalized
+    assert "dispatch_result_ref" in contract and "dispatch_result_digest" in contract
+    assert "does not dereference the result" in normalized
     assert "fail_action_on_emit_error=false" in normalized
     assert "performs no blind retry" in normalized
     assert "not an exactly-once guarantee" in normalized
@@ -151,6 +155,11 @@ def test_actionq_session_exit_argv_emits_a_valid_shard_observation(
                     "model": "gpt-5",
                     "outcome": "completed",
                     "branch": "agent/scope-iterate/21",
+                    "phase": "terminal",
+                    "terminal_status": "completed",
+                    "terminal_reason": "completed",
+                    "dispatch_result_ref": "artifact:sha256:" + "a" * 64,
+                    "dispatch_result_digest": "sha256:" + "a" * 64,
                 },
                 separators=(",", ":"),
             ),
@@ -168,6 +177,283 @@ def test_actionq_session_exit_argv_emits_a_valid_shard_observation(
     assert event["refs"] == ["wi:1154", "sprint:414"]
     assert event["runtime_session_id"] == session_id
     assert event["metadata"]["action_id"] == 21
+    assert event["metadata"]["phase"] == "terminal"
+    assert event["metadata"]["terminal_status"] == "completed"
+    assert event["metadata"]["terminal_reason"] == "completed"
+    assert event["metadata"]["dispatch_result_ref"] == "artifact:sha256:" + "a" * 64
+    assert event["metadata"]["dispatch_result_digest"] == "sha256:" + "a" * 64
+
+
+def test_actionq_session_exit_result_metadata_survives_rebuild_round_trip(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    metadata = {
+        "action_id": 2124,
+        "session_id": "session-round-trip",
+        "runtime_session_id": "session-round-trip",
+        "phase": "finalizing",
+        "terminal_status": "failed",
+        "terminal_reason": "process-exit",
+        "dispatch_result_ref": "artifact:sha256:" + "b" * 64,
+        "dispatch_result_digest": "sha256:" + "b" * 64,
+    }
+    added = CliRunner().invoke(
+        cli,
+        [
+            "add",
+            "--type", "session.exit",
+            "--source", "actionq-daemon",
+            "--actor", "actionq:session-round-trip",
+            "--summary", "Session exit observed",
+            "--metadata", json.dumps(metadata, separators=(",", ":")),
+            "--ts", "2026-04-26T10:00:00Z",
+        ],
+    )
+    assert added.exit_code == 0, added.output
+
+    shard_dir = tmp_path / "_artifacts" / "example-repo" / "audit"
+    (repo_root / ".auditctl" / "auditctl.db").unlink()
+    rebuilt = CliRunner().invoke(cli, ["rebuild", "--from-ndjson", str(shard_dir), "--replace"])
+    assert rebuilt.exit_code == 0, rebuilt.output
+
+    listed = CliRunner().invoke(cli, ["list", "--json", "--limit", "10"])
+    assert listed.exit_code == 0, listed.output
+    events = json.loads(listed.output)
+    assert len(events) == 1
+    assert events[0]["metadata"] == metadata
+
+
+def _active_actionq_result_metadata(**overrides: object) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "action_id": 2124,
+        "session_id": "session-contract",
+        "runtime_session_id": "session-contract",
+        "phase": "terminal",
+        "terminal_status": "completed",
+        "terminal_reason": "completed",
+        "dispatch_result_ref": "artifact:sha256:" + "e" * 64,
+        "dispatch_result_digest": "sha256:" + "e" * 64,
+    }
+    metadata.update(overrides)
+    return metadata
+
+
+@pytest.mark.parametrize(
+    "unsafe_reason",
+    [
+        "token=secret-value",
+        "/srv/actionq/worktrees/session-1/result.json",
+        "worker failed after retrying the finalizer against the remote host",
+    ],
+)
+def test_actionq_session_exit_rejects_unsafe_reason_on_add(
+    repo_root: Path, tmp_path: Path, unsafe_reason: str
+) -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "add",
+            "--type", "session.exit",
+            "--source", "actionq-daemon",
+            "--actor", "actionq:session-contract",
+            "--summary", "Session exit observed",
+            "--metadata", json.dumps(
+                _active_actionq_result_metadata(terminal_reason=unsafe_reason),
+                separators=(",", ":"),
+            ),
+            "--ts", "2026-04-26T10:00:00Z",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "recognized safe reason code" in result.output
+    assert not (tmp_path / "_artifacts" / "example-repo" / "audit").exists()
+
+
+def test_actionq_session_exit_rejects_result_identity_binding_on_add(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    missing_action = _active_actionq_result_metadata()
+    del missing_action["action_id"]
+    missing = runner.invoke(
+        cli,
+        [
+            "add", "--type", "session.exit", "--source", "actionq-daemon",
+            "--actor", "actionq:session-contract", "--summary", "Session exit",
+            "--metadata", json.dumps(missing_action, separators=(",", ":")),
+            "--ts", "2026-04-26T10:00:00Z",
+        ],
+    )
+    assert missing.exit_code != 0
+    assert "missing: action_id" in missing.output
+
+    mismatch = runner.invoke(
+        cli,
+        [
+            "add", "--type", "session.exit", "--source", "actionq-daemon",
+            "--actor", "actionq:session-contract", "--summary", "Session exit",
+            "--metadata", json.dumps(
+                _active_actionq_result_metadata(runtime_session_id="other-session"),
+                separators=(",", ":"),
+            ),
+            "--ts", "2026-04-26T10:00:01Z",
+        ],
+    )
+    assert mismatch.exit_code != 0
+    assert "session_id and runtime_session_id must match" in mismatch.output
+
+    actor_mismatch = runner.invoke(
+        cli,
+        [
+            "add", "--type", "session.exit", "--source", "actionq-daemon",
+            "--actor", "actionq:other-session", "--summary", "Session exit",
+            "--metadata", json.dumps(_active_actionq_result_metadata(), separators=(",", ":")),
+            "--ts", "2026-04-26T10:00:02Z",
+        ],
+    )
+    assert actor_mismatch.exit_code != 0
+    assert "actor must equal" in actor_mismatch.output
+    assert not (tmp_path / "_artifacts" / "example-repo" / "audit").exists()
+
+
+def test_actionq_session_exit_omitted_result_preserves_legacy_metadata(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    metadata = {
+        "action_id": 21,
+        "session_id": "legacy-session",
+        "runtime_session_id": "legacy-session",
+        "phase": None,
+        "terminal_reason": {"path": "/tmp/legacy.log", "note": "old publisher"},
+        "dispatch_result_ref": None,
+        "dispatch_result_digest": None,
+        "legacy_arbitrary": {"nested": [None, "unchanged"]},
+    }
+    result = CliRunner().invoke(
+        cli,
+        [
+            "add", "--type", "session.exit", "--source", "actionq-daemon",
+            "--actor", "actionq:legacy-session", "--summary", "Legacy session exit",
+            "--metadata", json.dumps(metadata, separators=(",", ":")),
+            "--ts", "2026-04-26T10:00:00Z",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    event = json.loads(
+        (tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson")
+        .read_text(encoding="utf-8")
+    )
+    assert event["metadata"] == metadata
+
+
+def test_actionq_session_exit_rebuild_rejects_unsafe_reason_before_mutation(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    added = CliRunner().invoke(
+        cli,
+        [
+            "add", "--type", "session.exit", "--source", "actionq-daemon",
+            "--actor", "actionq:session-contract", "--summary", "Session exit",
+            "--metadata", json.dumps(_active_actionq_result_metadata(), separators=(",", ":")),
+            "--ts", "2026-04-26T10:00:00Z",
+        ],
+    )
+    assert added.exit_code == 0, added.output
+    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    event = json.loads(shard.read_text(encoding="utf-8"))
+    event["metadata"]["terminal_reason"] = "/srv/private/worker-output.txt"
+    shard.write_text(json.dumps(event, separators=(",", ":")) + "\n", encoding="utf-8")
+    before_db = (repo_root / ".auditctl" / "auditctl.db").read_bytes()
+    before_shard = shard.read_bytes()
+
+    rebuilt = CliRunner().invoke(cli, ["rebuild", "--from-ndjson", str(shard), "--replace"])
+    assert rebuilt.exit_code != 0
+    assert "rebuild rejected [malformed_envelope]" in rebuilt.output
+    assert (repo_root / ".auditctl" / "auditctl.db").read_bytes() == before_db
+    assert shard.read_bytes() == before_shard
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        (
+            "runtime_session_id",
+            "other-session",
+            "metadata.runtime_session_id must match the observation-envelope runtime_session_id",
+        ),
+        (
+            "actor",
+            "actionq:other-session",
+            "actor must equal",
+        ),
+    ],
+)
+def test_actionq_session_exit_rebuild_rejects_envelope_identity_mismatch(
+    repo_root: Path,
+    tmp_path: Path,
+    field: str,
+    value: str,
+    error: str,
+) -> None:
+    added = CliRunner().invoke(
+        cli,
+        [
+            "add", "--type", "session.exit", "--source", "actionq-daemon",
+            "--actor", "actionq:session-contract", "--summary", "Session exit",
+            "--metadata", json.dumps(_active_actionq_result_metadata(), separators=(",", ":")),
+            "--ts", "2026-04-26T10:00:00Z",
+        ],
+    )
+    assert added.exit_code == 0, added.output
+    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    event = json.loads(shard.read_text(encoding="utf-8"))
+    event[field] = value
+    with pytest.raises(ValueError, match=error):
+        validate_event_object(event)
+    shard.write_text(json.dumps(event, separators=(",", ":")) + "\n", encoding="utf-8")
+    before_db = (repo_root / ".auditctl" / "auditctl.db").read_bytes()
+    before_shard = shard.read_bytes()
+
+    rebuilt = CliRunner().invoke(cli, ["rebuild", "--from-ndjson", str(shard), "--replace"])
+    assert rebuilt.exit_code != 0
+    assert "rebuild rejected [malformed_envelope]" in rebuilt.output
+    assert (repo_root / ".auditctl" / "auditctl.db").read_bytes() == before_db
+    assert shard.read_bytes() == before_shard
+
+
+def test_legacy_session_exit_shard_rebuilds_with_opaque_metadata(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    metadata = {
+        "phase": None,
+        "terminal_reason": {"path": "/tmp/legacy.log", "text": "free-form legacy value"},
+        "legacy_key": ["arbitrary", None],
+    }
+    shard = tmp_path / "legacy-session-exit.ndjson"
+    shard.write_text(
+        json.dumps(
+            {
+                "id": "ad:01HWXYZ0000000000000000000",
+                "ts": "2026-04-26T10:00:00Z",
+                "type": "session.exit",
+                "actor": "actionq:legacy",
+                "summary": "Legacy session exit",
+                "detail": None,
+                "refs": [],
+                "source": "actionq-daemon",
+                "metadata": metadata,
+                "created_at": "2026-04-26T10:00:01Z",
+            },
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    rebuilt = CliRunner().invoke(cli, ["rebuild", "--from-ndjson", str(shard), "--replace"])
+    assert rebuilt.exit_code == 0, rebuilt.output
+    listed = CliRunner().invoke(cli, ["list", "--json", "--limit", "10"])
+    assert listed.exit_code == 0, listed.output
+    assert json.loads(listed.output)[0]["metadata"] == metadata
 
 
 def test_session_mechanization_contract_freezes_event_set() -> None:

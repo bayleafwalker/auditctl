@@ -32,6 +32,55 @@ def test_metadata_must_be_object() -> None:
         parse_metadata("[]")
 
 
+def test_actionq_session_exit_result_projection_is_bounded_and_consistent() -> None:
+    event = {
+        "id": "ad:01HWXYZ0000000000000000000",
+        "ts": "2026-04-26T10:00:00Z",
+        "type": "session.exit",
+        "actor": "actionq:session-1",
+        "summary": "Session exit",
+        "detail": None,
+        "refs": [],
+        "source": "actionq-daemon",
+        "metadata": {
+            "action_id": 1,
+            "session_id": "session-1",
+            "runtime_session_id": "session-1",
+            "phase": "terminal",
+            "terminal_status": "completed",
+            "terminal_reason": "completed",
+            "dispatch_result_ref": "artifact:sha256:" + "c" * 64,
+            "dispatch_result_digest": "sha256:" + "c" * 64,
+        },
+        "created_at": "2026-04-26T10:00:01Z",
+    }
+    assert validate_event_object(event) == event
+
+    with pytest.raises(ValueError, match="missing:.*dispatch_result_digest"):
+        validate_event_object({
+            **event,
+            "metadata": {"dispatch_result_ref": "artifact:sha256:" + "c" * 64},
+        })
+    with pytest.raises(ValueError, match="recognized safe reason code"):
+        validate_event_object({
+            **event,
+            "metadata": {**event["metadata"], "terminal_reason": "/tmp/secret.txt"},
+        })
+    with pytest.raises(ValueError, match="same result"):
+        validate_event_object({
+            **event,
+            "metadata": {
+                **event["metadata"],
+                "dispatch_result_digest": "sha256:" + "d" * 64,
+            },
+        })
+    with pytest.raises(ValueError, match="32-byte bound"):
+        validate_event_object({
+            **event,
+            "metadata": {**event["metadata"], "phase": "p" * 33},
+        })
+
+
 def test_observation_envelope_maps_stable_audit_fields() -> None:
     event = {
         "id": "ad:01HWXYZ0000000000000000000",
