@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
+import json
+from importlib.metadata import PackageNotFoundError, distribution
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -17,6 +20,7 @@ from auditctl.vuoro_adapter import (
     VuoroAuditAdapter,
     catalog_operation_specs,
 )
+from vuoro_adapter_kit import CatalogRegistry, SCHEMA_DIALECT, SCHEMA_FEATURES
 
 
 class _ConnectionContext:
@@ -120,6 +124,51 @@ def test_catalog_specs_are_fresh_data_and_do_not_expose_handler_objects() -> Non
 
     assert "observation" in second[0]["input_schema"]["properties"]
     assert all(callable(spec["_handler_name"]) is False for spec in second)
+
+
+def test_catalog_wire_hash_is_stable_and_uses_shared_adapter_contract() -> None:
+    stripped = [
+        {key: value for key, value in spec.items() if key != "_handler_name"}
+        for spec in catalog_operation_specs()
+    ]
+    payload = json.dumps(stripped, sort_keys=True, separators=(",", ":")).encode()
+
+    assert len(payload) == 9399
+    assert hashlib.sha256(payload).hexdigest() == (
+        "0b7a318efa64d7f2556d1bed086f0dad6c2d6268ce692333fe620e9c26b47590"
+    )
+    assert all(spec["input_schema"]["$schema"] == SCHEMA_DIALECT for spec in stripped)
+    assert all(spec["result_schema"]["$schema"] == SCHEMA_DIALECT for spec in stripped)
+    assert all(spec["required_client_schema_features"] == list(SCHEMA_FEATURES) for spec in stripped)
+    assert isinstance(CatalogRegistry, type)
+
+
+def test_catalog_nested_data_and_shared_builder_inputs_are_mutation_isolated() -> None:
+    properties = {"value": {"type": "string"}}
+    from vuoro_adapter_kit import object_schema
+
+    schema = object_schema(properties, required=("value",))
+    properties["value"]["minLength"] = 99
+    assert schema["properties"]["value"] == {"type": "string"}
+    schema["properties"]["value"]["type"] = "integer"
+
+    assert properties["value"] == {"type": "string", "minLength": 99}
+    fresh = object_schema(properties, required=("value",))
+    assert fresh["properties"]["value"] == {"type": "string", "minLength": 99}
+
+
+def test_distribution_metadata_declares_immutable_adapter_kit_pin() -> None:
+    try:
+        requires = distribution("auditctl").requires or []
+    except PackageNotFoundError:
+        pytest.skip("auditctl is not installed as a distribution")
+    assert any(
+        requirement.startswith(
+            "vuoro-adapter-kit @ https://github.com/bayleafwalker/vuoro/releases/"
+            "download/vuoro-adapter-kit-v0.1.0/vuoro_adapter_kit-0.1.0-py3-none-any.whl"
+        )
+        for requirement in requires
+    )
 
 
 def test_local_capture_import_path_does_not_load_served_dependencies() -> None:
