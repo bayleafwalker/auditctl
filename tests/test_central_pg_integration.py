@@ -401,7 +401,18 @@ def test_compatibility_is_read_only_and_future_schemas_fail_closed(
     with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
         absent = check_compatibility(conn, schema=absent_schema)
     assert not absent.compatible
-    assert absent.reasons == ("schema_not_initialized",)
+    assert absent.to_dict() == {
+        "schema": absent_schema,
+        "domain_api_version": "audit/v1",
+        "installed_schema_version": None,
+        "minimum_schema_version": 2,
+        "maximum_schema_version": 2,
+        "current_role": RUNTIME_ROLE,
+        "expected_role_kind": "runtime",
+        "configured_role": None,
+        "compatible": False,
+        "reasons": ["schema_not_initialized"],
+    }
 
     future_schema = _schema("audit_future")
     _migrate_current(postgres_dsn, future_schema)
@@ -421,8 +432,18 @@ def test_compatibility_is_read_only_and_future_schemas_fail_closed(
             )
     with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
         future = check_compatibility(conn, schema=future_schema)
-    assert not future.compatible
-    assert future.reasons == ("schema_too_new",)
+    assert future.to_dict() == {
+        "schema": future_schema,
+        "domain_api_version": "audit/v1",
+        "installed_schema_version": 3,
+        "minimum_schema_version": 2,
+        "maximum_schema_version": 2,
+        "current_role": RUNTIME_ROLE,
+        "expected_role_kind": "runtime",
+        "configured_role": None,
+        "compatible": False,
+        "reasons": ["schema_too_new"],
+    }
 
 
 def test_runtime_role_rotation_revokes_the_previous_principal(
@@ -612,7 +633,19 @@ def test_role_contract_denies_runtime_ddl_and_migration_role_serving(
     event = _event(origin_stream_id=str(uuid4()), origin_seq=1, number=40)
 
     with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
-        assert check_compatibility(conn, schema=schema).compatible
+        compatibility = check_compatibility(conn, schema=schema)
+        assert compatibility.to_dict() == {
+            "schema": schema,
+            "domain_api_version": "audit/v1",
+            "installed_schema_version": 2,
+            "minimum_schema_version": 2,
+            "maximum_schema_version": 2,
+            "current_role": RUNTIME_ROLE,
+            "expected_role_kind": "runtime",
+            "configured_role": RUNTIME_ROLE,
+            "compatible": True,
+            "reasons": [],
+        }
         with pytest.raises(errors.InsufficientPrivilege):
             with conn.cursor() as cur:
                 cur.execute(

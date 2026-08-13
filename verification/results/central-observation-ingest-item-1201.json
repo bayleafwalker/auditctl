@@ -5,14 +5,14 @@
     "doc_id": "auditctl-vuoro-served-audit-alignment",
     "revision": "git:0751c6a77cacc5a2dd016705a5d2e9756a3216f2"
   },
-  "implementation_sha": "sha256:central-implementation-v1:538dd55d875f3ffc7b06fc52b3feb2e59cdb7d8f7c5175bb1e2e5254e6dbdc92",
+  "implementation_sha": "sha256:central-implementation-v1:13c39aae8c870e0eb904c76f34652b878f95be35268c92295ff1868f6eebfa3d",
   "depth": 2,
   "environment": {
     "backend": "disposable-local-postgresql",
     "isolation": "PostgreSQL READ COMMITTED transactions with per-schema advisory migration locks, per-event advisory locks, and per-origin stream row locks",
     "tool_versions": {
       "postgresql": "18.4",
-      "python": "3.14.6",
+      "python": "3.12.12",
       "pytest": "9.1.1"
     }
   },
@@ -97,10 +97,19 @@
       ]
     },
     {
+      "property": "shared schema-runtime adoption preserves auditctl migration bytes, ledger failures, compatibility output, and database authority",
+      "result": "property-tested",
+      "evidence": [
+        "the two packaged SQL assets remain exactly 1946 and 1740 UTF-8 bytes with SHA-256 1f6aca04414ca90a41fda2bb894b0d4f9b5c937979fb677139515fdc25ed52be and 66db0101dccde630400ae4e954aa9999ba9e57361dc07a0787ed40eec9a40794",
+        "shared ledger verdict tests retain auditctl's exact non-contiguous, checksum-drift, and future-version MigrationDriftError messages",
+        "disposable PostgreSQL tests freeze the complete compatible, absent, and future-schema compatibility dictionaries while exercising local transactions, advisory locks, DDL, grants, and runtime-role rotation"
+      ]
+    },
+    {
       "property": "local SQLite and NDJSON capture/rebuild semantics remain unchanged",
       "result": "example-tested",
       "evidence": [
-        "the complete 54-test suite passed, including dual-write, crash convergence, rebuild, CLI, and publisher tests",
+        "the complete 106-test suite passed, including dual-write, crash convergence, rebuild, CLI, publisher, release-wheel, and nine disposable-PostgreSQL tests",
         "the served central modules are not imported by auditctl CLI startup"
       ]
     }
@@ -110,6 +119,7 @@
     "The PostgreSQL instance was created under /tmp and stopped and removed by the test fixture; no shared or production database was addressed.",
     "The first harness runs exposed Nix initdb/postgres share-path resolution and were repaired by invoking resolved store binaries.",
     "Independent verification found the cross-stream global event-ID race; the correction serializes admission and retains an exact-constraint translation fallback.",
+    "vuoro-schema-runtime 0.1.0 is pinned to its immutable GitHub Release wheel with SHA-256 b66c9357c99aa9e1a7353991ce54105a8621958ecfac47f8c121d80b90b77912; the shared package performs no database I/O or SQL execution.",
     "HTTP/catalog behaviour, appservice Jobs, backup/restore, and cross-machine tests remain deferred to owner-local follow-up items.",
     "implementation_sha is SHA-256 over each UTF-8 relative path, NUL, exact file bytes, and NUL in the sorted auditctl.dispatch.json, central Python/migration asset, and pyproject.toml path set asserted by tests/test_verification_contracts.py. This excludes the evidence packet itself and is reproducible without self-reference."
   ]
