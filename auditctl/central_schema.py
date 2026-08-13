@@ -1,20 +1,27 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
-import re
 from dataclasses import asdict, dataclass
 from importlib import resources
 from typing import Any, Sequence
+
+from vuoro_schema_runtime import (
+    MigrationAsset,
+    compatibility_report,
+    identifier,
+    quote_identifier,
+    render_schema_sql,
+    sha256_text,
+    validate_contiguous_migrations,
+)
 
 CURRENT_SCHEMA_VERSION = 2
 MIN_RUNTIME_SCHEMA_VERSION = 2
 MAX_RUNTIME_SCHEMA_VERSION = 2
 DOMAIN_API_VERSION = "audit/v1"
 MIGRATION_LOCK_NAMESPACE = "auditctl-central-schema"
-IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 
 
 class CentralSchemaError(RuntimeError):
@@ -33,12 +40,9 @@ class SchemaCompatibilityError(CentralSchemaError):
     """The served audit runtime cannot safely use the selected schema."""
 
 
-@dataclass(frozen=True)
-class Migration:
-    version: int
-    name: str
-    sql: str
-    sha256: str
+# Preserve the existing domain-module type name while its implementation comes
+# from the shared, database-independent runtime.
+Migration = MigrationAsset
 
 
 @dataclass(frozen=True)
@@ -70,18 +74,16 @@ class Compatibility:
 
 
 def _identifier(value: str, field: str) -> str:
-    if not IDENTIFIER_RE.fullmatch(value):
-        raise ValueError(f"{field} must be an unquoted PostgreSQL identifier")
-    return value
+    return identifier(value, field)
 
 
 def _quoted(value: str, field: str) -> str:
-    return f'"{_identifier(value, field)}"'
+    return quote_identifier(value, field)
 
 
-def load_migrations() -> tuple[Migration, ...]:
+def load_migrations() -> tuple[MigrationAsset, ...]:
     root = resources.files("auditctl.central_migrations").joinpath("versions")
-    migrations: list[Migration] = []
+    migrations: list[MigrationAsset] = []
     for asset in sorted(root.iterdir(), key=lambda item: item.name):
         if not asset.name.endswith(".sql"):
             continue
@@ -89,11 +91,11 @@ def load_migrations() -> tuple[Migration, ...]:
         version = int(prefix)
         sql = asset.read_text(encoding="utf-8")
         migrations.append(
-            Migration(
+            MigrationAsset(
                 version=version,
                 name=name.removesuffix(".sql"),
                 sql=sql,
-                sha256=hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+                sha256=sha256_text(sql),
             )
         )
     versions = [migration.version for migration in migrations]
@@ -101,7 +103,45 @@ def load_migrations() -> tuple[Migration, ...]:
         raise CentralSchemaError(
             f"migration assets must be contiguous through {CURRENT_SCHEMA_VERSION}: {versions}"
         )
-    return tuple(migrations)
+    return validate_contiguous_migrations(migrations)
+
+
+def _validate_applied_migrations(
+    migrations: Sequence[MigrationAsset], applied: dict[int, tuple[str, str]]
+) -> None:
+    """Apply the shared pure ledger verdict while preserving local errors."""
+    if not applied:
+        return
+    report = compatibility_report(
+        migrations,
+        applied,
+        schema="audit_ledger_verdict",
+        domain_api_version=DOMAIN_API_VERSION,
+        minimum_schema_version=1,
+        maximum_schema_version=CURRENT_SCHEMA_VERSION,
+        current_role="audit_ledger_verifier",
+        configured_role="audit_ledger_verifier",
+    )
+    if "migration_ledger_not_contiguous" in report.reasons:
+        raise MigrationDriftError("migration ledger versions are not contiguous")
+    if "schema_too_new" in report.reasons:
+        assert report.installed_schema_version is not None
+        raise MigrationDriftError(
+            f"installed schema version {report.installed_schema_version} "
+            "is newer than this package"
+        )
+    if "migration_ledger_drift" in report.reasons:
+        by_version = {migration.version: migration for migration in migrations}
+        version = next(
+            version
+            for version, recorded in sorted(applied.items())
+            if version not in by_version
+            or recorded
+            != (by_version[version].name, by_version[version].sha256)
+        )
+        raise MigrationDriftError(
+            f"migration {version} checksum or name does not match the ledger"
+        )
 
 
 def _current_user(conn: Any) -> str:
@@ -276,16 +316,8 @@ def migrate(
             )
         _bootstrap_ledger(conn, schema)
         applied = _applied_migrations(conn, schema)
-        applied_versions = sorted(applied)
-        if applied_versions and applied_versions != list(
-            range(1, applied_versions[-1] + 1)
-        ):
-            raise MigrationDriftError("migration ledger versions are not contiguous")
-        if applied_versions and applied_versions[-1] > CURRENT_SCHEMA_VERSION:
-            raise MigrationDriftError(
-                f"installed schema version {applied_versions[-1]} is newer than this package"
-            )
         migrations = load_migrations()
+        _validate_applied_migrations(migrations, applied)
         for migration in migrations:
             recorded = applied.get(migration.version)
             if recorded is not None:
@@ -297,7 +329,7 @@ def migrate(
             if migration.version > target_version:
                 break
             schema_ident = _quoted(schema, "schema")
-            rendered = migration.sql.replace("__SCHEMA__", schema_ident)
+            rendered = render_schema_sql(migration.sql, schema)
             with conn.cursor() as cur:
                 cur.execute(rendered)
                 cur.execute(

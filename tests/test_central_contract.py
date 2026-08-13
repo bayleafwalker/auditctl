@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -11,10 +13,14 @@ from auditctl.central import (
 )
 from auditctl.central_schema import (
     CURRENT_SCHEMA_VERSION,
+    Migration,
+    MigrationDriftError,
+    _validate_applied_migrations,
     load_migrations,
     migrate,
 )
 from auditctl.validation import with_observation_envelope
+from vuoro_schema_runtime import MigrationAsset, render_schema_sql
 
 
 def _event() -> dict:
@@ -46,6 +52,65 @@ def test_central_migration_assets_are_contiguous_and_immutable_inputs() -> None:
     assert "__SCHEMA__" in migrations[0].sql
     assert "record_class = 'observation'" in migrations[0].sql
     assert "ingest_receipt" in migrations[1].sql
+
+
+def test_shared_runtime_preserves_exact_migration_asset_bytes_and_digests() -> None:
+    migrations = load_migrations()
+    asset_root = (
+        Path(__file__).parents[1]
+        / "auditctl"
+        / "central_migrations"
+        / "versions"
+    )
+
+    assert Migration is MigrationAsset
+    assert all(isinstance(migration, MigrationAsset) for migration in migrations)
+    assert [len(migration.sql.encode("utf-8")) for migration in migrations] == [
+        1946,
+        1740,
+    ]
+    assert [migration.sha256 for migration in migrations] == [
+        "1f6aca04414ca90a41fda2bb894b0d4f9b5c937979fb677139515fdc25ed52be",
+        "66db0101dccde630400ae4e954aa9999ba9e57361dc07a0787ed40eec9a40794",
+    ]
+    assert all(
+        migration.sha256
+        == hashlib.sha256(migration.sql.encode("utf-8")).hexdigest()
+        for migration in migrations
+    )
+    assert [migration.sql.encode("utf-8") for migration in migrations] == [
+        asset.read_bytes() for asset in sorted(asset_root.glob("*.sql"))
+    ]
+
+
+@pytest.mark.parametrize("schema", ["audit", "vuoro_dev_audit", "a"])
+def test_shared_runtime_rendering_is_byte_equivalent_to_local_substitution(
+    schema: str,
+) -> None:
+    for migration in load_migrations():
+        expected = migration.sql.replace("__SCHEMA__", f'"{schema}"')
+        actual = render_schema_sql(migration.sql, schema)
+
+        assert actual.encode("utf-8") == expected.encode("utf-8")
+        assert "__SCHEMA__" not in actual
+
+
+def test_shared_ledger_verdict_preserves_domain_error_contract() -> None:
+    migrations = load_migrations()
+    valid = {
+        migration.version: (migration.name, migration.sha256)
+        for migration in migrations
+    }
+
+    _validate_applied_migrations(migrations, valid)
+    with pytest.raises(MigrationDriftError, match="versions are not contiguous"):
+        _validate_applied_migrations(migrations, {2: valid[2]})
+    with pytest.raises(MigrationDriftError, match="migration 1 checksum"):
+        _validate_applied_migrations(
+            migrations, {**valid, 1: (valid[1][0], "0" * 64)}
+        )
+    with pytest.raises(MigrationDriftError, match="version 3 is newer"):
+        _validate_applied_migrations(migrations, {**valid, 3: ("future", "3" * 64)})
 
 
 def test_prepare_observation_preserves_origin_and_produces_stable_record_hash() -> None:

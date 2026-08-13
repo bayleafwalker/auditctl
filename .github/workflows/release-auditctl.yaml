@@ -62,7 +62,7 @@ jobs:
             echo "expected exactly one release wheel, found ${#wheels[@]}" >&2
             exit 1
           fi
-      - name: Validate wheel metadata, tag, and immutable adapter dependency
+      - name: Validate wheel metadata, tag, and immutable shared dependencies
         run: uv run python verification/validate_release_contract.py dist/*.whl --tag "$GITHUB_REF_NAME"
       - name: Record deterministic wheel identity
         id: wheel
