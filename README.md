@@ -18,6 +18,14 @@ rebuildable.
 
 ## Install
 
+Release wheels are published on the auditctl GitHub Releases page (auditctl is
+not published to PyPI). For a reproducible install, download the wheel from
+the desired release and compare its SHA-256 with the release notes:
+
+```bash
+pipx install ./auditctl-0.1.1-py3-none-any.whl
+```
+
 ```bash
 uv tool install /projects/dev/auditctl --python python3
 ```

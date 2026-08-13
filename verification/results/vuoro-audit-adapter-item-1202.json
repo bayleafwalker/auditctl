@@ -5,7 +5,7 @@
     "doc_id": "auditctl-central-observation-ingest",
     "revision": "sha256:df9ca3fadd6b9b5d314338126dc5b06db2873bca15851bcbcaa933a5489e7173"
   },
-  "implementation_sha": "sha256:vuoro-audit-adapter-v1:614c7eb34049919f286d6d375f4f7a6aa1bf98bc85fa1510eae5b6bad37844e8",
+  "implementation_sha": "sha256:vuoro-audit-adapter-v1:391023f07214b9906579204149b51e72ba5909583c5e73e1513843039c4313c0",
   "depth": 2,
   "environment": {
     "backend": "temporary-local-SQLite-NDJSON-and-disposable-PostgreSQL",
@@ -94,6 +94,16 @@
         "the suite included all local dual-write and rebuild tests plus nine disposable-PostgreSQL integration tests",
         "the local CLI import path does not import vuoro_service or psycopg"
       ]
+    },
+    {
+      "property": "auditctl consumes the shared adapter contract without changing its owned operation wire shape",
+      "result": "property-tested",
+      "evidence": [
+        "vuoro-adapter-kit GitHub release wheel URL is pinned with digest sha256:0037898a4c9f01720a42302365b0172ecd203732070326ea2abdf549a44bf0c2",
+        "uv.lock records the same immutable URL and digest",
+        "the stripped catalog JSON is exactly 9399 bytes with SHA-256 0b7a318efa64d7f2556d1bed086f0dad6c2d6268ce692333fe620e9c26b47590",
+        "the complete auditctl suite passed 96 tests with one intentional stale-wheel contract skip; nine PostgreSQL integration histories ran against disposable PostgreSQL 16.14"
+      ]
     }
   ],
   "counterexamples": [
@@ -107,6 +117,7 @@
     "Every PostgreSQL instance, schema, local repository, SQLite database, and NDJSON shard used by verification was temporary and removed by fixtures; no shared or production data was addressed.",
     "The direct Vuoro composition check used the current sibling vuoro-service implementation only to validate registry acceptance; auditctl retains no runtime dependency in its local capture path.",
     "Composed HTTP identity resolution, deployment topology, backup/restore, and cross-machine functional testing remain appservice/Vuoro rollout responsibilities.",
+    "The locally built auditctl-0.1.1 wheel has SHA-256 1507bf1cbf57ff0231bc7bea950785533996a8a50f80b4a8b0aa21e046bdf50c and validates against tag auditctl-v0.1.1 and its pinned adapter metadata.",
     "implementation_sha is SHA-256 over each UTF-8 relative path, NUL, exact file bytes, and NUL in the sorted README.md, auditctl/central.py, auditctl/central_schema.py, auditctl/vuoro_adapter.py, and docs/contracts/central-observation-ingest.md path set asserted by tests/test_verification_contracts.py. This excludes the evidence packet itself and is reproducible without self-reference."
   ]
 }

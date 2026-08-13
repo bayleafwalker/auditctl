@@ -12,8 +12,15 @@ from contextlib import AbstractContextManager
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
-from typing import Any, Callable, NoReturn, Protocol
+from typing import Any, Callable, NoReturn
 from uuid import UUID
+
+from vuoro_adapter_kit import (
+    CatalogRegistry,
+    SCHEMA_DIALECT,
+    SCHEMA_FEATURES as _ADAPTER_SCHEMA_FEATURES,
+    object_schema,
+)
 
 from .central import (
     IngestConflictError,
@@ -25,10 +32,9 @@ from .central import (
 )
 from .central_schema import SchemaCompatibilityError, check_compatibility
 
-SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 DOMAIN_NAME = "audit"
 DOMAIN_API_VERSION = "audit/v1"
-SCHEMA_FEATURES = ["json-schema-draft-2020-12"]
+SCHEMA_FEATURES = list(_ADAPTER_SCHEMA_FEATURES)
 READ_AUTHORITY = "audit.observation.read"
 SUBMIT_AUTHORITY = "audit.observation.submit"
 
@@ -37,28 +43,7 @@ OperationDefinitionFactory = Callable[..., Any]
 RejectionFactory = Callable[[str, str, int], BaseException]
 
 
-class CatalogRegistry(Protocol):
-    """The structural subset of Vuoro's registry used during composition."""
-
-    def register(self, definition: Any, handler: Callable[[Any, Any], Any]) -> None:
-        ...
-
-
-def _object_schema(
-    properties: dict[str, Any],
-    *,
-    required: list[str] | None = None,
-    additional_properties: bool = False,
-) -> dict[str, Any]:
-    schema: dict[str, Any] = {
-        "$schema": SCHEMA_DIALECT,
-        "type": "object",
-        "properties": properties,
-        "additionalProperties": additional_properties,
-    }
-    if required:
-        schema["required"] = required
-    return schema
+_object_schema = object_schema
 
 
 _NULLABLE_TEXT = {"type": ["string", "null"], "minLength": 1}
