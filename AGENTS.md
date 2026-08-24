@@ -17,7 +17,7 @@ For the `/projects/dev` workspace, `AUDITCTL_ARTIFACTS_ROOT=/projects/dev`.
 
 ## Development Workflow
 
-- Run targeted `pytest` checks before committing; behavior changes must include tests.
+- Run targeted `pytest` checks before committing; behavior changes must include tests. Invoke them as `uv run --frozen pytest`. A bare `pytest` or `python -m pytest` fails during collection — `vuoro_schema_runtime` resolves only inside the project environment, so the ambient interpreter errors before any test runs.
 - Keep auditctl local-first: no Postgres backend, daemon, or service.
 - Publishers call the `auditctl` binary as a subprocess; do not add a Python client API unless an accepted plan changes that boundary.
 - Preserve stable event IDs and idempotent rebuild semantics.
