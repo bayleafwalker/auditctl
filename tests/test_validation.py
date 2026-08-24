@@ -22,6 +22,11 @@ def test_capsule_ref_prefix_is_valid() -> None:
     ]
 
 
+def test_baseline_ref_prefix_is_valid() -> None:
+    baseline_hash = "a" * 64
+    assert validate_refs([f"baseline:{baseline_hash}"]) == [f"baseline:{baseline_hash}"]
+
+
 def test_invalid_timestamp_errors() -> None:
     with pytest.raises(ValueError, match="ending in Z"):
         validate_timestamp("2026-04-26T10:00:00+00:00")
