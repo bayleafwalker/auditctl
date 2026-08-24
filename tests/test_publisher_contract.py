@@ -669,7 +669,10 @@ def test_candidate_reviewed_contract_freezes_exact_mapping_and_retry_posture() -
     contract = (ROOT / "docs/contracts/publisher-subprocess.md").read_text(encoding="utf-8")
     normalized = " ".join(contract.split())
 
-    assert "contract_version: 2" in contract
+    # candidate.reviewed was registered by contract version 2; later additive
+    # versions bump the front matter, so pin the versioning note that records
+    # which version introduced this mapping rather than the current version.
+    assert "Version 2 adds `candidate.reviewed`" in normalized
     assert "`candidate.reviewed`" in contract
     assert "`source` is `actionq-review`" in normalized
     assert "authenticated review identity" in normalized
@@ -818,3 +821,253 @@ def test_candidate_reviewed_subprocess_blind_retry_demonstrates_reconcile_requir
         for event in events
     ]
     assert projected[0] == projected[1]
+
+
+def test_harness_baseline_contract_freezes_mapping_and_window_semantics() -> None:
+    contract = (ROOT / "docs/contracts/publisher-subprocess.md").read_text(encoding="utf-8")
+    normalized = " ".join(contract.split())
+
+    assert "`harness.baseline`" in contract
+    assert "harness-baseline" in contract
+    assert "baseline:<baseline_hash>" in contract
+    assert "contract_version: 3" in contract
+    assert "Version 3 adds `harness.baseline`" in normalized
+    # The window semantics are the load-bearing part of this mapping: silence
+    # asserts the previous baseline, so both trust properties must stay frozen.
+    assert "silence is the in-window state, not an absence of observation" in normalized
+    assert "this publisher has no committing authority behind it" in normalized
+    assert "A failed probe records its absence; it is never skipped." in normalized
+    assert "report a stability it never observed" in normalized
+    assert "Per-component digests are carried alongside the composite hash." in normalized
+    assert "drift is attributable to the component that actually changed" in normalized
+    for field in (
+        "`baseline_hash`",
+        "`component_digests`",
+        "`changed_components`",
+        "`collector=harness-baseline`",
+        "`event_type=harness-baseline`",
+    ):
+        assert field in contract
+
+
+def test_harness_baseline_first_observation_argv_emits_a_valid_shard_observation(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    baseline_hash = "b" * 64
+    component_digests = {
+        "cli_version": "1" * 64,
+        "auto_mode_rules": "2" * 64,
+        "env_overrides": "3" * 64,
+    }
+    result = CliRunner().invoke(
+        cli,
+        [
+            "add",
+            "--type",
+            "harness.baseline",
+            "--source",
+            "harness-baseline",
+            "--actor",
+            "bayleaf",
+            "--summary",
+            f"Harness baseline established at {baseline_hash[:12]}",
+            "--ref",
+            f"baseline:{baseline_hash}",
+            "--metadata",
+            json.dumps(
+                {
+                    "event_type": "harness-baseline",
+                    "baseline_hash": baseline_hash,
+                    "component_digests": component_digests,
+                    "changed_components": [],
+                    "collector": "harness-baseline",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            "--ts",
+            "2026-08-24T10:00:00Z",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-08-24.ndjson"
+    event = json.loads(shard.read_text(encoding="utf-8"))
+    assert validate_event_object(event) == event
+    assert event["type"] == "harness.baseline"
+    assert event["source"] == "harness-baseline"
+    assert event["refs"] == [f"baseline:{baseline_hash}"]
+    assert event["metadata"]["baseline_hash"] == baseline_hash
+    assert event["metadata"]["changed_components"] == []
+    assert event["metadata"]["component_digests"] == component_digests
+    assert event["metadata"]["collector"] == "harness-baseline"
+    assert event["record_class"] == "observation"
+    # The ref carries the same composite hash the metadata reports, so repeat
+    # observations of one baseline are reconcilable by ref alone.
+    assert event["refs"][0].removeprefix("baseline:") == event["metadata"]["baseline_hash"]
+
+
+def test_harness_baseline_moved_observation_names_changed_components(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    baseline_hash = "c" * 64
+    changed = ["cli_version", "settings:/home/bayleaf/.claude/settings.json"]
+    argv = [
+        "add",
+        "--type",
+        "harness.baseline",
+        "--source",
+        "harness-baseline",
+        "--actor",
+        "bayleaf",
+        "--summary",
+        f"Harness baseline moved to {baseline_hash[:12]} ({len(changed)} component(s) changed)",
+        "--ref",
+        f"baseline:{baseline_hash}",
+        "--metadata",
+        json.dumps(
+            {
+                "event_type": "harness-baseline",
+                "baseline_hash": baseline_hash,
+                "component_digests": {
+                    "cli_version": "4" * 64,
+                    "settings:/home/bayleaf/.claude/settings.json": "5" * 64,
+                },
+                "changed_components": changed,
+                "collector": "harness-baseline",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        "--ts",
+        "2026-08-24T11:00:00Z",
+    ]
+
+    result = _invoke_auditctl_subprocess(repo_root, tmp_path, argv)
+    assert result.returncode == 0, result.stderr
+
+    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-08-24.ndjson"
+    event = json.loads(shard.read_text(encoding="utf-8"))
+    assert validate_event_object(event) == event
+    assert event["metadata"]["changed_components"] == changed
+    assert "component(s) changed" in event["summary"]
+    # Only digests cross the boundary; raw component values never do.
+    assert all(
+        len(digest) == 64 for digest in event["metadata"]["component_digests"].values()
+    )
+
+
+def test_harness_baseline_absent_component_is_hashed_not_dropped(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    """A disappeared probe must move the hash and be named as a changed component.
+
+    If a failed probe were dropped instead, the composite would be unchanged and
+    the collector would assert a stability it never observed.
+    """
+    baseline_hash = "d" * 64
+    result = CliRunner().invoke(
+        cli,
+        [
+            "add",
+            "--type",
+            "harness.baseline",
+            "--source",
+            "harness-baseline",
+            "--actor",
+            "bayleaf",
+            "--summary",
+            f"Harness baseline moved to {baseline_hash[:12]} (1 component(s) changed)",
+            "--ref",
+            f"baseline:{baseline_hash}",
+            "--metadata",
+            json.dumps(
+                {
+                    "event_type": "harness-baseline",
+                    "baseline_hash": baseline_hash,
+                    # The absent probe still has a digest of its absent-with-reason
+                    # value, so it remains present in the component mapping.
+                    "component_digests": {"cli_version": "6" * 64, "plugins": "7" * 64},
+                    "changed_components": ["plugins"],
+                    "collector": "harness-baseline",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            "--ts",
+            "2026-08-24T12:00:00Z",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-08-24.ndjson"
+    event = json.loads(shard.read_text(encoding="utf-8"))
+    assert validate_event_object(event) == event
+    assert "plugins" in event["metadata"]["component_digests"]
+    assert event["metadata"]["changed_components"] == ["plugins"]
+
+
+def test_harness_baseline_events_survive_rebuild_round_trip(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    first_hash = "e" * 64
+    second_hash = "f" * 64
+
+    for baseline_hash, changed, summary in (
+        (first_hash, [], f"Harness baseline established at {first_hash[:12]}"),
+        (
+            second_hash,
+            ["cli_version"],
+            f"Harness baseline moved to {second_hash[:12]} (1 component(s) changed)",
+        ),
+    ):
+        added = runner.invoke(
+            cli,
+            [
+                "add",
+                "--type",
+                "harness.baseline",
+                "--source",
+                "harness-baseline",
+                "--actor",
+                "bayleaf",
+                "--summary",
+                summary,
+                "--ref",
+                f"baseline:{baseline_hash}",
+                "--metadata",
+                json.dumps(
+                    {
+                        "event_type": "harness-baseline",
+                        "baseline_hash": baseline_hash,
+                        "component_digests": {"cli_version": "8" * 64},
+                        "changed_components": changed,
+                        "collector": "harness-baseline",
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                "--ts",
+                "2026-08-24T13:00:00Z",
+            ],
+        )
+        assert added.exit_code == 0, added.output
+
+    shard_dir = tmp_path / "_artifacts" / "example-repo" / "audit"
+    (repo_root / ".auditctl" / "auditctl.db").unlink()
+    rebuild = runner.invoke(cli, ["rebuild", "--from-ndjson", str(shard_dir), "--replace"])
+    assert rebuild.exit_code == 0, rebuild.output
+    assert "2 imported" in rebuild.output
+
+    listed = runner.invoke(cli, ["list", "--json", "--limit", "10"])
+    assert listed.exit_code == 0, listed.output
+    rebuilt_events = json.loads(listed.output)
+    assert {event["type"] for event in rebuilt_events} == {"harness.baseline"}
+    assert {event["refs"][0] for event in rebuilt_events} == {
+        f"baseline:{first_hash}",
+        f"baseline:{second_hash}",
+    }
+    by_hash = {e["metadata"]["baseline_hash"]: e for e in rebuilt_events}
+    assert by_hash[first_hash]["metadata"]["changed_components"] == []
+    assert by_hash[second_hash]["metadata"]["changed_components"] == ["cli_version"]

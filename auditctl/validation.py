@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-VALID_REF_PREFIXES = ("wi:", "ka:", "ad:", "sha:", "pr:", "sprint:", "capsule:")
+VALID_REF_PREFIXES = ("wi:", "ka:", "ad:", "sha:", "pr:", "sprint:", "capsule:", "baseline:")
 EVENT_ID_RE = re.compile(r"^ad:[0-9A-HJKMNP-TV-Z]{26}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 IMMUTABLE_RESULT_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
