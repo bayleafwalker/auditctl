@@ -212,3 +212,74 @@ def test_rebuild_rejects_whole_batch_without_mutating_ledger_or_sources(
         assert stream["next_origin_seq"] == 2
     finally:
         conn.close()
+
+
+def test_rebuild_refuses_to_drop_events_the_shards_do_not_carry(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    """Shards are authoritative, so a rebuild that would lose rows must stop.
+
+    Measured on 2026-08-28 in the agentops ledger: the index held 493 events
+    and its shards 468.  The 25-event difference survived a ledger retirement
+    that carried rows into the new index without their shard lines, and
+    ``rebuild --dry-run`` still reported "Validated 7 shard(s): 468 event(s)"
+    -- a green gate over silent data loss.  The batch validation cannot see
+    this: it only inspects the ids the batch itself names.
+    """
+
+    runner = CliRunner()
+    for index, summary in enumerate(("Kept", "Lost"), start=1):
+        added = runner.invoke(
+            cli,
+            [
+                "add",
+                "--type", "decision",
+                "--actor", "tester",
+                "--summary", summary,
+                "--ts", f"2026-04-26T10:00:0{index}Z",
+            ],
+        )
+        assert added.exit_code == 0, added.output
+
+    shard_dir = tmp_path / "_artifacts" / "example-repo" / "audit"
+    shard = next(shard_dir.glob("events-*.ndjson"))
+    lines = shard.read_text().splitlines()
+    assert len(lines) == 2
+    # Drop the second event from the shard, keeping it in the index: exactly
+    # the shape a lost or unwritten shard leaves behind.
+    shard.write_text(lines[0] + "\n")
+
+    rejected = runner.invoke(cli, ["rebuild", "--from-ndjson", str(shard_dir), "--dry-run"])
+    assert rejected.exit_code != 0
+    assert "index_only_events" in rejected.output
+    assert "1 event(s) that no shard carries" in rejected.output
+
+    accepted = runner.invoke(
+        cli,
+        ["rebuild", "--from-ndjson", str(shard_dir), "--dry-run", "--allow-index-only"],
+    )
+    assert accepted.exit_code == 0, accepted.output
+    assert "1 index-only event(s) will be lost" in accepted.output
+
+
+def test_rebuild_reports_full_coverage_without_the_override(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    added = runner.invoke(
+        cli,
+        [
+            "add",
+            "--type", "decision",
+            "--actor", "tester",
+            "--summary", "Covered",
+            "--ts", "2026-04-26T10:00:00Z",
+        ],
+    )
+    assert added.exit_code == 0, added.output
+    shard_dir = tmp_path / "_artifacts" / "example-repo" / "audit"
+
+    result = runner.invoke(cli, ["rebuild", "--from-ndjson", str(shard_dir), "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == "Validated 1 shard(s): 1 event(s)."

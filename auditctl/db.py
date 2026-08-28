@@ -408,6 +408,35 @@ def validate_import_batch(
         conn.close()
 
 
+def index_only_events(
+    db_path: Path, events: Iterable[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return persisted events the incoming shard batch does not carry.
+
+    Shards are the authoritative record and the sqlite index is derived, so
+    an event that exists only in the index is either a lost shard or a
+    publisher that indexed without appending.  Both are silent data loss the
+    moment anyone rebuilds, and neither is visible to the batch validation
+    above, which only ever inspects the ids the batch itself names.
+    """
+
+    if not db_path.exists():
+        return []
+    batch_ids = {event["id"] for event in _deduplicate_batch(events)}
+    uri = f"file:{db_path}?mode=ro&immutable=1"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT id, ts, type, source FROM audit_event ORDER BY ts, id"
+        ).fetchall()
+    except sqlite3.Error as exc:
+        raise ImportValidationError("destination_unreadable", str(exc)) from exc
+    finally:
+        conn.close()
+    return [dict(row) for row in rows if row["id"] not in batch_ids]
+
+
 def query_events(
     conn: sqlite3.Connection,
     *,

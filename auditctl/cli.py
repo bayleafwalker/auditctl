@@ -222,11 +222,35 @@ def render_cmd(since, until, type_, source, format_, limit) -> None:
             click.echo(rendered)
 
 
+def _index_only_message(index_only, *, shard_count: int, shard_events: int) -> str:
+    """Say exactly what is missing, so the operator can find the publisher."""
+
+    sources = sorted({str(event.get("source") or "unknown") for event in index_only})
+    dates = sorted({str(event.get("ts") or "")[:10] for event in index_only})
+    sample = ", ".join(str(event["id"]) for event in index_only[:3])
+    return (
+        f"rebuild rejected [index_only_events]: the index holds {len(index_only)} "
+        f"event(s) that no shard carries, so rebuilding from "
+        f"{shard_count} shard(s) / {shard_events} event(s) would drop them.\n"
+        f"  sources: {', '.join(sources)}\n"
+        f"  dates:   {', '.join(dates)}\n"
+        f"  first:   {sample}\n"
+        "Shards are authoritative: find the publisher that indexed without "
+        "appending and re-emit, or pass --allow-index-only to accept the loss."
+    )
+
+
 @cli.command("rebuild")
 @click.option("--from-ndjson", "from_ndjson", required=True, help="Shard file, directory, or glob")
 @click.option("--replace", is_flag=True, default=False, help="Replace current sqlite db after creating a backup")
 @click.option("--dry-run", is_flag=True, default=False, help="Validate only")
-def rebuild_cmd(from_ndjson, replace, dry_run) -> None:
+@click.option(
+    "--allow-index-only",
+    is_flag=True,
+    default=False,
+    help="Proceed even though the index holds events no shard carries (they are lost)",
+)
+def rebuild_cmd(from_ndjson, replace, dry_run, allow_index_only) -> None:
     """Rebuild sqlite from NDJSON shards."""
     try:
         paths = resolve_paths()
@@ -237,13 +261,26 @@ def rebuild_cmd(from_ndjson, replace, dry_run) -> None:
         # This is intentionally before --replace moves the current DB.  A rejected
         # batch is read-only with respect to its source, destination, and cursor.
         db.validate_import_batch(paths.db_path, events, against_existing=not replace)
+        # Coverage is a separate question from validity.  The batch validation
+        # only inspects ids the batch names, so a shard that was never written
+        # -- or a publisher that indexed without appending -- passes it while
+        # the rebuild silently drops those events.
+        index_only = db.index_only_events(paths.db_path, events)
     except (ImportInputError, db.ImportValidationError) as exc:
         raise click.ClickException(f"rebuild rejected [{exc.code}]") from exc
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
+    if index_only and not allow_index_only:
+        raise click.ClickException(
+            _index_only_message(index_only, shard_count=len(input_paths), shard_events=len(events))
+        )
+
     if dry_run:
-        click.echo(f"Validated {len(input_paths)} shard(s): {len(events)} event(s).")
+        summary = f"Validated {len(input_paths)} shard(s): {len(events)} event(s)."
+        if index_only:
+            summary += f" WARNING: {len(index_only)} index-only event(s) will be lost."
+        click.echo(summary)
         return
 
     if replace and paths.db_path.exists():
@@ -257,7 +294,10 @@ def rebuild_cmd(from_ndjson, replace, dry_run) -> None:
         imported, skipped = db.import_events(conn, events)
     finally:
         conn.close()
-    click.echo(f"Rebuilt audit db from {len(input_paths)} shard(s): {imported} imported, {skipped} skipped.")
+    message = f"Rebuilt audit db from {len(input_paths)} shard(s): {imported} imported, {skipped} skipped."
+    if index_only:
+        message += f" {len(index_only)} index-only event(s) were discarded on request."
+    click.echo(message)
 
 
 if __name__ == "__main__":
