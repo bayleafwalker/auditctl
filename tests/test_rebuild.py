@@ -283,3 +283,65 @@ def test_rebuild_reports_full_coverage_without_the_override(
 
     assert result.exit_code == 0, result.output
     assert result.output.strip() == "Validated 1 shard(s): 1 event(s)."
+
+
+def test_allow_index_only_permits_the_gap_those_events_left(repo_root: Path) -> None:
+    """The flag must not promise something the validator then refuses.
+
+    `--allow-index-only` accepts that index-only events are lost. Those events hold
+    origin_seq numbers, allocated at add time, that no shard carries -- so accepting
+    the loss necessarily accepts a hole in the sequence. Rejecting the hole made the
+    flag unusable with --replace, and permanently so: the numbers are gone, and no
+    later append can reclaim them. Measured on the real agentops store 2026-08-29:
+    588 shard events spanning origin_seq 1-624, 36 holes, unrebuildable since 08-26.
+    """
+    runner = CliRunner()
+    for n in range(3):
+        assert runner.invoke(cli, ["add", "--type", "decision", "--actor", "t",
+                                   "--summary", f"kept {n}",
+                                   "--ts", "2026-04-26T10:00:00Z"]).exit_code == 0
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    kept = shard.read_text(encoding="utf-8").splitlines()
+
+    # Add one more, then remove only that line from the shard: an event that is
+    # indexed but carried by no shard, exactly as a split write leaves things.
+    assert runner.invoke(cli, ["add", "--type", "decision", "--actor", "t",
+                               "--summary", "indexed only",
+                               "--ts", "2026-04-26T10:00:00Z"]).exit_code == 0
+    assert runner.invoke(cli, ["add", "--type", "decision", "--actor", "t",
+                               "--summary", "after the hole",
+                               "--ts", "2026-04-26T10:00:00Z"]).exit_code == 0
+    lines = shard.read_text(encoding="utf-8").splitlines()
+    shard.write_text("\n".join(kept + [lines[-1]]) + "\n", encoding="utf-8")
+
+    without = runner.invoke(cli, ["rebuild", "--from-ndjson", str(shard.parent), "--replace"])
+    assert without.exit_code != 0, "an unaccepted hole must still be a discontinuity"
+
+    accepted = runner.invoke(
+        cli, ["rebuild", "--from-ndjson", str(shard.parent), "--replace", "--allow-index-only"]
+    )
+    assert accepted.exit_code == 0, accepted.output
+    assert "index-only" in accepted.output
+
+
+def test_an_unaccepted_hole_is_still_a_discontinuity(repo_root: Path) -> None:
+    """Only the accepted sequence numbers are skipped, never an arbitrary gap."""
+    runner = CliRunner()
+    for n in range(3):
+        assert runner.invoke(cli, ["add", "--type", "decision", "--actor", "t",
+                                   "--summary", f"e{n}",
+                                   "--ts", "2026-04-26T10:00:00Z"]).exit_code == 0
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    lines = shard.read_text(encoding="utf-8").splitlines()
+    # Drop a middle line *and* its index row, so it is not index-only -- just missing.
+    shard.write_text("\n".join([lines[0], lines[2]]) + "\n", encoding="utf-8")
+    import sqlite3
+    conn = sqlite3.connect(repo_root / ".auditctl" / "auditctl.db")
+    conn.execute("DELETE FROM audit_event WHERE summary = 'e1'")
+    conn.commit(); conn.close()
+
+    result = runner.invoke(
+        cli, ["rebuild", "--from-ndjson", str(shard.parent), "--replace", "--allow-index-only"]
+    )
+    assert result.exit_code != 0
+    assert "origin_discontinuity" in result.output

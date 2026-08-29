@@ -260,14 +260,26 @@ def rebuild_cmd(from_ndjson, replace, dry_run, allow_index_only) -> None:
         if not input_paths:
             raise ValueError("no NDJSON shards matched")
         events = list(read_events(input_paths))
-        # This is intentionally before --replace moves the current DB.  A rejected
-        # batch is read-only with respect to its source, destination, and cursor.
-        db.validate_import_batch(paths.db_path, events, against_existing=not replace)
         # Coverage is a separate question from validity.  The batch validation
         # only inspects ids the batch names, so a shard that was never written
         # -- or a publisher that indexed without appending -- passes it while
-        # the rebuild silently drops those events.
+        # the rebuild silently drops those events.  It is computed first because
+        # those same events left holes in the sequence, and continuity may only
+        # skip a hole the caller has explicitly accepted.
         index_only = db.index_only_events(paths.db_path, events)
+        accepted_missing_seqs = frozenset(
+            event["origin_seq"]
+            for event in index_only
+            if allow_index_only and event.get("origin_seq") is not None
+        )
+        # This is intentionally before --replace moves the current DB.  A rejected
+        # batch is read-only with respect to its source, destination, and cursor.
+        db.validate_import_batch(
+            paths.db_path,
+            events,
+            against_existing=not replace,
+            accepted_missing_seqs=accepted_missing_seqs,
+        )
     except (ImportInputError, db.ImportValidationError) as exc:
         raise click.ClickException(f"rebuild rejected [{exc.code}]") from exc
     except (OSError, ValueError) as exc:
@@ -293,7 +305,7 @@ def rebuild_cmd(from_ndjson, replace, dry_run, allow_index_only) -> None:
     conn = db.connect(paths.db_path)
     try:
         db.init_db(conn)
-        imported, skipped = db.import_events(conn, events)
+        imported, skipped = db.import_events(conn, events, accepted_missing_seqs)
     finally:
         conn.close()
     message = f"Rebuilt audit db from {len(input_paths)} shard(s): {imported} imported, {skipped} skipped."

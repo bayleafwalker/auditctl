@@ -340,8 +340,13 @@ def _deduplicate_batch(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]
     return unique
 
 
-def _validate_import_batch(conn: sqlite3.Connection, events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def _validate_import_batch(
+    conn: sqlite3.Connection,
+    events: Iterable[dict[str, Any]],
+    accepted_missing_seqs: frozenset[int] | None = None,
+) -> list[dict[str, Any]]:
     """Validate the complete import before inserting a row or advancing an origin."""
+    accepted_missing_seqs = accepted_missing_seqs or frozenset()
     unique = _deduplicate_batch(events)
     existing: dict[str, dict[str, Any]] = {}
     for event in unique:
@@ -370,6 +375,20 @@ def _validate_import_batch(conn: sqlite3.Connection, events: Iterable[dict[str, 
         if event["id"] in existing:
             continue  # Exact canonical retry; it cannot advance the cursor.
         if event["origin_seq"] != expected_seq:
+            # An index-only event the caller has explicitly accepted losing left a
+            # hole at exactly this sequence number. Without this, `--allow-index-only`
+            # promises something the validator then refuses: the flag accepts the
+            # loss, and continuity rejects the gap that loss necessarily created. A
+            # store could therefore never be rebuilt once any event was indexed
+            # without being appended -- permanently, since origin_seq is allocated at
+            # add time and the number is gone. Only the accepted seqs are skipped;
+            # any other hole is still a discontinuity.
+            while (
+                expected_seq in accepted_missing_seqs
+                and expected_seq < event["origin_seq"]
+            ):
+                expected_seq += 1
+        if event["origin_seq"] != expected_seq:
             raise ImportValidationError(
                 "origin_discontinuity",
                 f"expected origin_seq {expected_seq}, got {event['origin_seq']}",
@@ -380,7 +399,11 @@ def _validate_import_batch(conn: sqlite3.Connection, events: Iterable[dict[str, 
 
 
 def validate_import_batch(
-    db_path: Path, events: Iterable[dict[str, Any]], *, against_existing: bool = True
+    db_path: Path,
+    events: Iterable[dict[str, Any]],
+    *,
+    against_existing: bool = True,
+    accepted_missing_seqs: frozenset[int] | None = None,
 ) -> None:
     """Read-only preflight used before rebuild may replace its destination DB."""
     unique = _deduplicate_batch(events)
@@ -390,7 +413,7 @@ def validate_import_batch(
         conn.row_factory = sqlite3.Row
         init_db(conn)
         try:
-            _validate_import_batch(conn, unique)
+            _validate_import_batch(conn, unique, accepted_missing_seqs)
         finally:
             conn.close()
         return
@@ -401,7 +424,7 @@ def validate_import_batch(
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
     try:
-        _validate_import_batch(conn, unique)
+        _validate_import_batch(conn, unique, accepted_missing_seqs)
     except sqlite3.Error as exc:
         raise ImportValidationError("destination_unreadable", str(exc)) from exc
     finally:
@@ -428,7 +451,10 @@ def index_only_events(
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
-            "SELECT id, ts, type, source FROM audit_event ORDER BY ts, id"
+            # origin_seq is selected because these events hold sequence numbers that
+            # no shard carries; a caller accepting their loss must be able to accept
+            # the holes they left, and cannot do that without knowing which.
+            "SELECT id, ts, type, source, origin_seq FROM audit_event ORDER BY ts, id"
         ).fetchall()
     except sqlite3.Error as exc:
         raise ImportValidationError("destination_unreadable", str(exc)) from exc
@@ -473,13 +499,21 @@ def query_events(
     return [_row_to_event(row) for row in conn.execute(sql, params).fetchall()]
 
 
-def import_events(conn: sqlite3.Connection, events: Iterable[dict[str, Any]]) -> tuple[int, int]:
+def import_events(
+    conn: sqlite3.Connection,
+    events: Iterable[dict[str, Any]],
+    accepted_missing_seqs: frozenset[int] | None = None,
+) -> tuple[int, int]:
     batch = list(events)
     imported = 0
     skipped = len(batch) - len(_deduplicate_batch(batch))
     conn.execute("BEGIN IMMEDIATE")
     try:
-        unique = _validate_import_batch(conn, batch)
+        # The writer revalidates to close the local-writer race, so it needs the same
+        # accepted gaps as the preflight. Without them the preflight passes and the
+        # writer rejects -- the failure is then raised outside the caller's handler
+        # and surfaces as a traceback rather than a rejection.
+        unique = _validate_import_batch(conn, batch, accepted_missing_seqs)
         existing_ids = {
             event["id"]
             for event in unique
