@@ -29,7 +29,7 @@ def test_rebuild_from_directory_round_trips(repo_root: Path, tmp_path: Path) -> 
         ],
     )
     assert add.exit_code == 0, add.output
-    shard_dir = tmp_path / "_artifacts" / "example-repo" / "audit"
+    shard_dir = repo_root / "_artifacts" / "example-repo" / "audit"
 
     (repo_root / ".auditctl" / "auditctl.db").unlink()
     rebuild = runner.invoke(cli, ["rebuild", "--from-ndjson", str(shard_dir), "--replace"])
@@ -154,7 +154,7 @@ def test_rebuild_rejects_whole_batch_without_mutating_ledger_or_sources(
     )
     assert seeded.exit_code == 0, seeded.output
     db_path = repo_root / ".auditctl" / "auditctl.db"
-    audit_root = tmp_path / "_artifacts" / "example-repo" / "audit"
+    audit_root = repo_root / "_artifacts" / "example-repo" / "audit"
     source = tmp_path / "events-2026-04-26.ndjson"
     persisted = json.loads(next(audit_root.glob("events-*.ndjson")).read_text().splitlines()[0])
 
@@ -241,7 +241,7 @@ def test_rebuild_refuses_to_drop_events_the_shards_do_not_carry(
         )
         assert added.exit_code == 0, added.output
 
-    shard_dir = tmp_path / "_artifacts" / "example-repo" / "audit"
+    shard_dir = repo_root / "_artifacts" / "example-repo" / "audit"
     shard = next(shard_dir.glob("events-*.ndjson"))
     lines = shard.read_text().splitlines()
     assert len(lines) == 2
@@ -277,7 +277,7 @@ def test_rebuild_reports_full_coverage_without_the_override(
         ],
     )
     assert added.exit_code == 0, added.output
-    shard_dir = tmp_path / "_artifacts" / "example-repo" / "audit"
+    shard_dir = repo_root / "_artifacts" / "example-repo" / "audit"
 
     result = runner.invoke(cli, ["rebuild", "--from-ndjson", str(shard_dir), "--dry-run"])
 

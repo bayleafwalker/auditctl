@@ -19,7 +19,7 @@ def _invoke_auditctl_subprocess(
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["AUDITCTL_DB"] = str(repo_root / ".auditctl" / "auditctl.db")
-    env["AUDITCTL_ARTIFACTS_ROOT"] = str(tmp_path)
+    env["AUDITCTL_ARTIFACTS_ROOT"] = str(repo_root)
     env["PYTHONPATH"] = os.pathsep.join(
         part for part in (str(ROOT), env.get("PYTHONPATH")) if part
     )
@@ -89,7 +89,7 @@ def test_sprintctl_close_argv_emits_a_valid_shard_observation(
     )
 
     assert result.exit_code == 0, result.output
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
     event = json.loads(shard.read_text(encoding="utf-8"))
     assert validate_event_object(event) == event
     assert event["type"] == "sprint.closed"
@@ -169,7 +169,7 @@ def test_actionq_session_exit_argv_emits_a_valid_shard_observation(
     )
 
     assert result.exit_code == 0, result.output
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
     event = json.loads(shard.read_text(encoding="utf-8"))
     assert validate_event_object(event) == event
     assert event["type"] == "session.exit"
@@ -211,7 +211,7 @@ def test_actionq_session_exit_result_metadata_survives_rebuild_round_trip(
     )
     assert added.exit_code == 0, added.output
 
-    shard_dir = tmp_path / "_artifacts" / "example-repo" / "audit"
+    shard_dir = repo_root / "_artifacts" / "example-repo" / "audit"
     (repo_root / ".auditctl" / "auditctl.db").unlink()
     rebuilt = CliRunner().invoke(cli, ["rebuild", "--from-ndjson", str(shard_dir), "--replace"])
     assert rebuilt.exit_code == 0, rebuilt.output
@@ -266,7 +266,7 @@ def test_actionq_session_exit_rejects_unsafe_reason_on_add(
     )
     assert result.exit_code != 0
     assert "recognized safe reason code" in result.output
-    assert not (tmp_path / "_artifacts" / "example-repo" / "audit").exists()
+    assert not (repo_root / "_artifacts" / "example-repo" / "audit").exists()
 
 
 def test_actionq_session_exit_rejects_result_identity_binding_on_add(
@@ -313,7 +313,7 @@ def test_actionq_session_exit_rejects_result_identity_binding_on_add(
     )
     assert actor_mismatch.exit_code != 0
     assert "actor must equal" in actor_mismatch.output
-    assert not (tmp_path / "_artifacts" / "example-repo" / "audit").exists()
+    assert not (repo_root / "_artifacts" / "example-repo" / "audit").exists()
 
 
 def test_actionq_session_exit_omitted_result_preserves_legacy_metadata(
@@ -340,7 +340,7 @@ def test_actionq_session_exit_omitted_result_preserves_legacy_metadata(
     )
     assert result.exit_code == 0, result.output
     event = json.loads(
-        (tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson")
+        (repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson")
         .read_text(encoding="utf-8")
     )
     assert event["metadata"] == metadata
@@ -359,7 +359,7 @@ def test_actionq_session_exit_rebuild_rejects_unsafe_reason_before_mutation(
         ],
     )
     assert added.exit_code == 0, added.output
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
     event = json.loads(shard.read_text(encoding="utf-8"))
     event["metadata"]["terminal_reason"] = "/srv/private/worker-output.txt"
     shard.write_text(json.dumps(event, separators=(",", ":")) + "\n", encoding="utf-8")
@@ -405,7 +405,7 @@ def test_actionq_session_exit_rebuild_rejects_envelope_identity_mismatch(
         ],
     )
     assert added.exit_code == 0, added.output
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
     event = json.loads(shard.read_text(encoding="utf-8"))
     event[field] = value
     with pytest.raises(ValueError, match=error):
@@ -507,7 +507,7 @@ def test_session_started_argv_emits_a_valid_shard_observation(
     )
 
     assert result.exit_code == 0, result.output
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
     event = json.loads(shard.read_text(encoding="utf-8"))
     assert validate_event_object(event) == event
     assert event["type"] == "session.started"
@@ -521,7 +521,7 @@ def test_session_ended_and_end_inferred_argv_emit_valid_shard_observations(
 ) -> None:
     runner = CliRunner()
     runtime_session_id = "runsess-0002"
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
 
     ended = runner.invoke(
         cli,
@@ -607,7 +607,7 @@ def test_session_capsule_pointer_argv_emits_a_valid_shard_observation(
     )
 
     assert result.exit_code == 0, result.output
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
     event = json.loads(shard.read_text(encoding="utf-8"))
     assert validate_event_object(event) == event
     assert event["type"] == "session.capsule-pointer"
@@ -648,7 +648,7 @@ def test_session_mechanization_events_survive_rebuild_round_trip(
         added = runner.invoke(cli, args)
         assert added.exit_code == 0, added.output
 
-    shard_dir = tmp_path / "_artifacts" / "example-repo" / "audit"
+    shard_dir = repo_root / "_artifacts" / "example-repo" / "audit"
     (repo_root / ".auditctl" / "auditctl.db").unlink()
     rebuild = runner.invoke(cli, ["rebuild", "--from-ndjson", str(shard_dir), "--replace"])
     assert rebuild.exit_code == 0, rebuild.output
@@ -743,7 +743,7 @@ def test_candidate_reviewed_subprocess_emits_exact_redacted_mapping(
     )
 
     assert result.returncode == 0, result.stderr
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-07-31.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-07-31.ndjson"
     event = json.loads(shard.read_text(encoding="utf-8"))
     assert validate_event_object(event) == event
     assert event["type"] == "candidate.reviewed"
@@ -797,7 +797,7 @@ def test_candidate_reviewed_subprocess_blind_retry_demonstrates_reconcile_requir
     assert first.returncode == 0, first.stderr
     assert second.returncode == 0, second.stderr
 
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-07-31.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-07-31.ndjson"
     events = [json.loads(line) for line in shard.read_text(encoding="utf-8").splitlines()]
     assert len(events) == 2
     assert events[0]["id"] != events[1]["id"]
@@ -891,7 +891,7 @@ def test_harness_baseline_first_observation_argv_emits_a_valid_shard_observation
     )
 
     assert result.exit_code == 0, result.output
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-08-24.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-08-24.ndjson"
     event = json.loads(shard.read_text(encoding="utf-8"))
     assert validate_event_object(event) == event
     assert event["type"] == "harness.baseline"
@@ -946,7 +946,7 @@ def test_harness_baseline_moved_observation_names_changed_components(
     result = _invoke_auditctl_subprocess(repo_root, tmp_path, argv)
     assert result.returncode == 0, result.stderr
 
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-08-24.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-08-24.ndjson"
     event = json.loads(shard.read_text(encoding="utf-8"))
     assert validate_event_object(event) == event
     assert event["metadata"]["changed_components"] == changed
@@ -1000,7 +1000,7 @@ def test_harness_baseline_absent_component_is_hashed_not_dropped(
     )
 
     assert result.exit_code == 0, result.output
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-08-24.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-08-24.ndjson"
     event = json.loads(shard.read_text(encoding="utf-8"))
     assert validate_event_object(event) == event
     assert "plugins" in event["metadata"]["component_digests"]
@@ -1054,7 +1054,7 @@ def test_harness_baseline_events_survive_rebuild_round_trip(
         )
         assert added.exit_code == 0, added.output
 
-    shard_dir = tmp_path / "_artifacts" / "example-repo" / "audit"
+    shard_dir = repo_root / "_artifacts" / "example-repo" / "audit"
     (repo_root / ".auditctl" / "auditctl.db").unlink()
     rebuild = runner.invoke(cli, ["rebuild", "--from-ndjson", str(shard_dir), "--replace"])
     assert rebuild.exit_code == 0, rebuild.output

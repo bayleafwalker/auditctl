@@ -28,10 +28,9 @@ def _invoke_add_histories(
         try:
             history_root = Path(root) / f"history-{history}"
             repo = history_root / "example-repo"
-            artifacts = history_root / "artifacts"
             os.chdir(repo)
             os.environ["AUDITCTL_DB"] = str(repo / ".auditctl" / "auditctl.db")
-            os.environ["AUDITCTL_ARTIFACTS_ROOT"] = str(artifacts)
+            os.environ["AUDITCTL_ARTIFACTS_ROOT"] = str(repo)
             start_barrier.wait(timeout=10)
             result = CliRunner().invoke(
                 cli,
@@ -85,7 +84,7 @@ def test_successful_add_writes_sqlite_and_ndjson(repo_root: Path, tmp_path: Path
         ],
     )
     assert result.exit_code == 0, result.output
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
     lines = shard.read_text().splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["summary"] == "Commit abc"
@@ -146,7 +145,7 @@ def test_short_write_is_completed_without_a_partial_ndjson_line(
     )
 
     assert result.exit_code == 0, result.output
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
     lines = shard.read_text().splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["summary"] == "short write"
@@ -235,7 +234,7 @@ def test_concurrent_writers_produce_complete_lines(tmp_path: Path) -> None:
     assert exitcodes == [0] * 8, f"child exitcodes={exitcodes}\n{diagnostics}"
 
     for history in range(history_count):
-        artifacts_root = tmp_path / f"history-{history}" / "artifacts"
+        artifacts_root = tmp_path / f"history-{history}" / "example-repo"
         shard = (
             artifacts_root
             / "_artifacts"
@@ -255,7 +254,7 @@ def test_restart_reconciles_fsynced_ndjson_before_reusing_sequence(
     repo_root: Path, tmp_path: Path
 ) -> None:
     db_path = repo_root / ".auditctl" / "auditctl.db"
-    shard = tmp_path / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
+    shard = repo_root / "_artifacts" / "example-repo" / "audit" / "events-2026-04-26.ndjson"
     conn = db.connect(db_path)
     db.init_db(conn)
     conn.execute("BEGIN IMMEDIATE")

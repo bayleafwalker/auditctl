@@ -13,7 +13,11 @@ def repo_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (repo / ".git").mkdir()
     monkeypatch.chdir(repo)
     monkeypatch.setenv("AUDITCTL_DB", str(repo / ".auditctl" / "auditctl.db"))
-    monkeypatch.setenv("AUDITCTL_ARTIFACTS_ROOT", str(tmp_path))
+    # Co-rooted, deliberately. This fixture used to point the artifacts root at
+    # `tmp_path` while the index resolved to `tmp_path/example-repo` -- the exact split
+    # that misrouted 13 events in production on 2026-08-29. With the split normalised
+    # into the fixture, no test in this suite could have caught it.
+    monkeypatch.setenv("AUDITCTL_ARTIFACTS_ROOT", str(repo))
     return repo
 
 

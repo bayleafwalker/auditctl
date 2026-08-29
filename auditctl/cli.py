@@ -11,7 +11,7 @@ import click
 from . import db
 from .ids import new_event_id
 from .ndjson import ImportInputError, append_event, read_events, resolve_inputs
-from .paths import require_artifacts_root, resolve_paths, shard_path
+from .paths import require_artifacts_root, resolve_audit_context, resolve_paths, shard_path
 from .render import render_text
 from .validation import (
     canonical_json,
@@ -66,7 +66,9 @@ def cli() -> None:
 def add_cmd(type_, actor, summary, detail, refs, source, metadata, ts, output_json) -> None:
     """Add one audit event to sqlite and today's NDJSON shard."""
     try:
-        artifacts_root = require_artifacts_root()
+        # One resolution, consumed. Do not reintroduce a separately-resolved root here:
+        # that split is what misrouted 13 events on 2026-08-29.
+        context = resolve_audit_context()
         timestamp = validate_timestamp(ts or _now())
         created_at = _now()
         event = validate_event_object(
@@ -83,9 +85,8 @@ def add_cmd(type_, actor, summary, detail, refs, source, metadata, ts, output_js
                 "created_at": created_at,
             }
         )
-        paths = resolve_paths()
-        ndjson_path = shard_path(artifacts_root, paths.repo_id, timestamp)
-        conn = db.connect(paths.db_path)
+        ndjson_path = context.shard_for(timestamp)
+        conn = db.connect(context.index_path)
         db.init_db(conn)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -139,8 +140,9 @@ def add_cmd(type_, actor, summary, detail, refs, source, metadata, ts, output_js
                     "ts": event["ts"],
                     "type": event["type"],
                     "source": event["source"],
-                    "repo_id": paths.repo_id,
+                    "repo_id": context.repo_id,
                     "ndjson_path": str(ndjson_path),
+                    "resolution_source": context.resolution_source,
                 },
                 sort_keys=True,
             )

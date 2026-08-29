@@ -205,7 +205,7 @@ def test_vuoro_adapter_retries_local_outbox_across_service_restart(
     )
     assert local_add.exit_code == 0, local_add.output
     shard = (
-        tmp_path
+        repo_root
         / "_artifacts"
         / "example-repo"
         / "audit"

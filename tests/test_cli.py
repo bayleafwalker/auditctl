@@ -68,8 +68,34 @@ def test_add_rejects_invalid_metadata(repo_root: Path) -> None:
     assert "metadata must be a JSON object" in result.output
 
 
-def test_add_requires_artifacts_root(repo_root: Path, monkeypatch) -> None:
+def test_add_defaults_the_artifacts_root_to_the_resolved_repository(
+    repo_root: Path, monkeypatch
+) -> None:
+    """An absent root is not an error; it is the normal case.
+
+    Requiring it was the defect's precondition: every caller had to supply the root
+    out of band, and on 2026-08-29 a shared hook supplied one naming a single
+    repository for every repo that used it. A root that defaults to the resolved
+    repository cannot be supplied wrongly, because it is not supplied at all.
+    """
     monkeypatch.delenv("AUDITCTL_ARTIFACTS_ROOT", raising=False)
     result = CliRunner().invoke(cli, ["add", "--type", "x", "--actor", "a", "--summary", "s"])
+    assert result.exit_code == 0, result.output
+    shard = repo_root / "_artifacts" / repo_root.name / "audit"
+    assert list(shard.glob("events-*.ndjson")), "shard must land under the resolved repo"
+
+
+def test_add_refuses_an_artifacts_root_that_disagrees_with_the_index(
+    repo_root: Path, monkeypatch, tmp_path: Path
+) -> None:
+    """Fail closed, do not prefer one half.
+
+    This is the exact production shape: a correct index and a root pointing at a
+    different repository. Both halves are individually valid, so nothing but a
+    cross-check can catch it.
+    """
+    monkeypatch.setenv("AUDITCTL_ARTIFACTS_ROOT", str(tmp_path / "somewhere-else"))
+    result = CliRunner().invoke(cli, ["add", "--type", "x", "--actor", "a", "--summary", "s"])
     assert result.exit_code != 0
-    assert "AUDITCTL_ARTIFACTS_ROOT is required" in result.output
+    assert "does not agree with the resolved repository" in result.output
+    assert "index-only" in result.output
