@@ -75,7 +75,17 @@ def _migration_2(conn: sqlite3.Connection) -> None:
     )
 
 
-_MIGRATIONS = [_migration_1, _migration_2]
+def _migration_3(conn: sqlite3.Connection) -> None:
+    """Carry the resolver's account of a write into sqlite as well as the shard.
+
+    The shard already holds it -- it is the whole event, canonically serialised -- so this
+    exists so that `list`, `render` and a rebuilt index can answer the same question the
+    shard can. A field only the NDJSON knows is a field no query reaches.
+    """
+    conn.execute("ALTER TABLE audit_event ADD COLUMN resolved_context TEXT")
+
+
+_MIGRATIONS = [_migration_1, _migration_2, _migration_3]
 
 _WAL_BUSY_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.04, 0.08)
 
@@ -132,8 +142,8 @@ def insert_event(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
             (id, ts, type, actor, summary, detail, refs, source, metadata, created_at,
              origin_stream_id, origin_seq, schema_version, record_class,
              runtime_session_id, basis_revision, correlation_id, causation_id,
-             payload_sha256)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             payload_sha256, resolved_context)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event["id"],
@@ -155,6 +165,7 @@ def insert_event(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
             event.get("correlation_id"),
             event.get("causation_id"),
             event.get("payload_sha256"),
+            canonical_json(event["resolved_context"]) if event.get("resolved_context") else None,
         ),
     )
 
@@ -166,8 +177,8 @@ def insert_event_ignore(conn: sqlite3.Connection, event: dict[str, Any]) -> bool
             (id, ts, type, actor, summary, detail, refs, source, metadata, created_at,
              origin_stream_id, origin_seq, schema_version, record_class,
              runtime_session_id, basis_revision, correlation_id, causation_id,
-             payload_sha256)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             payload_sha256, resolved_context)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO NOTHING
         """,
         (
@@ -190,6 +201,7 @@ def insert_event_ignore(conn: sqlite3.Connection, event: dict[str, Any]) -> bool
             event.get("correlation_id"),
             event.get("causation_id"),
             event.get("payload_sha256"),
+            canonical_json(event["resolved_context"]) if event.get("resolved_context") else None,
         ),
     )
     return cur.rowcount == 1
@@ -244,6 +256,14 @@ def observe_origin(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
         )
 
 
+def _column(row: sqlite3.Row, name: str) -> Any:
+    """A column that may predate its migration, read without assuming it is there."""
+    try:
+        return row[name]
+    except (IndexError, KeyError):
+        return None
+
+
 def _row_to_event(row: sqlite3.Row) -> dict[str, Any]:
     event = {
         "id": row["id"],
@@ -257,6 +277,9 @@ def _row_to_event(row: sqlite3.Row) -> dict[str, Any]:
         "metadata": json.loads(row["metadata"] or "{}"),
         "created_at": row["created_at"],
     }
+    resolved_context = _column(row, "resolved_context")
+    if resolved_context:
+        event["resolved_context"] = json.loads(resolved_context)
     if row["origin_stream_id"] is not None:
         event.update(
             {

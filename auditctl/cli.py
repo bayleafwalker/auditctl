@@ -69,6 +69,7 @@ def add_cmd(type_, actor, summary, detail, refs, source, metadata, ts, output_js
         # One resolution, consumed. Do not reintroduce a separately-resolved root here:
         # that split is what misrouted 13 events on 2026-08-29.
         context = resolve_audit_context()
+        published_from = Path.cwd()
         timestamp = validate_timestamp(ts or _now())
         created_at = _now()
         event = validate_event_object(
@@ -83,6 +84,10 @@ def add_cmd(type_, actor, summary, detail, refs, source, metadata, ts, output_js
                 "source": source,
                 "metadata": parse_metadata(metadata),
                 "created_at": created_at,
+                # The resolver's account of this write, not the publisher's. A caller
+                # cannot supply or suppress it; that is the point of recording it here
+                # rather than leaving it to publishers and their metadata dictionaries.
+                "resolved_context": context.as_record(published_from),
             }
         )
         ndjson_path = context.shard_for(timestamp)

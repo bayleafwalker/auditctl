@@ -14,7 +14,7 @@ def test_init_db_creates_schema(repo_root: Path) -> None:
     try:
         db.init_db(conn)
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 2
+        assert version == 3
         tables = {
             row[0]
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
@@ -163,7 +163,7 @@ def test_v1_migration_preserves_legacy_event(repo_root: Path) -> None:
 
         db.init_db(conn)
 
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 2
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 3
         assert db.query_events(conn) == [legacy]
     finally:
         conn.close()

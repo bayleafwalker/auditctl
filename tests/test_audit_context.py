@@ -283,3 +283,105 @@ def test_identity_is_not_taken_from_the_environment(tmp_path: Path) -> None:
     context = resolve_audit_context(cwd=repo, env={"AUDITCTL_REPO_ID": "something-else"})
 
     assert context.repo_id == "solo"
+
+
+# --- The write must record the context it resolved -------------------------------------
+#
+# Resolution fails closed on a *contradiction*. A redirect through AUDITCTL_DB produces no
+# contradiction: it moves identity, index and shard together, so every check above passes
+# and both stores validate clean afterwards. Measured 2026-08-29 (agentops
+# docs/evidence/measurements/2026-08-29-coherent-context-redirect.md); confirmed in code by
+# the survey of the same date.
+#
+# What made the August misrouting repairable was that it was incoherent -- the mismatch
+# between index and shard location was itself the evidence of where each event belonged. A
+# coherent redirect leaves no such trace, so the origin has to be written down while it is
+# still known. These tests are about that record, not about refusing the redirect: writing
+# into another repository's store on purpose is legitimate, and a rule people route around
+# is worse than the silence it replaced.
+
+
+def test_a_context_records_where_the_write_was_published_from(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "alpha")
+    (repo / "sub").mkdir()
+    context = resolve_audit_context(cwd=repo / "sub", env={})
+    record = context.as_record(repo / "sub")
+
+    assert record["repo_id"] == "alpha"
+    assert record["repo_root"] == str(repo.resolve())
+    assert record["published_from"] == str(repo / "sub")
+    assert record["resolution_source"] == "git-marker"
+
+
+def test_a_coherent_redirect_is_invisible_to_the_checks_but_visible_in_the_record(
+    tmp_path: Path,
+) -> None:
+    """The whole point, stated as one test.
+
+    Publishing from `alpha` with AUDITCTL_DB naming `beta` resolves cleanly -- no
+    contradiction exists to raise on, and every field agrees with every other. The only
+    thing that distinguishes it from a legitimate write in `beta` is where it came from,
+    which is exactly what the record carries and nothing else does.
+    """
+    alpha = _repo(tmp_path, "alpha")
+    beta = _repo(tmp_path, "beta", index=True)
+
+    context = resolve_audit_context(
+        cwd=alpha, env={"AUDITCTL_DB": str(beta / ".auditctl" / "auditctl.db")}
+    )
+
+    # Coherent: nothing raised, and all three agree on beta.
+    assert context.repo_id == "beta"
+    assert context.repo_root == beta.resolve()
+    assert context.artifacts_root == beta.resolve()
+
+    # And the record is the only thing that knows it came from alpha.
+    record = context.as_record(alpha)
+    assert record["published_from"] == str(alpha)
+    assert record["repo_root"] == str(beta.resolve())
+    assert record["published_from"] != record["repo_root"]
+    assert record["resolution_source"] == "explicit-db"
+
+
+def test_the_record_is_complete_or_absent_never_partial(tmp_path: Path) -> None:
+    """Partial context is worse than none.
+
+    A reader who finds `published_from` on half the events cannot tell "this write did not
+    record it" from "this write came from the repository itself", and that ambiguity is the
+    defect the field exists to remove.
+    """
+    from auditctl.validation import RESOLVED_CONTEXT_FIELDS, validate_resolved_context
+
+    repo = _repo(tmp_path, "alpha")
+    record = resolve_audit_context(cwd=repo, env={}).as_record(repo)
+    assert set(record) == set(RESOLVED_CONTEXT_FIELDS)
+
+    validate_resolved_context({"resolved_context": record})
+    validate_resolved_context({})  # absent is fine; historical events have none
+
+    for field in RESOLVED_CONTEXT_FIELDS:
+        partial = {k: v for k, v in record.items() if k != field}
+        with pytest.raises(ValueError, match="incomplete resolved_context"):
+            validate_resolved_context({"resolved_context": partial})
+
+
+def test_a_publisher_cannot_forge_or_suppress_the_record(tmp_path: Path) -> None:
+    """It is the resolver's account, not the publisher's.
+
+    The value of this field is that it is not supplied by whoever is writing the event. A
+    publisher that could set it could also set it to the answer that makes its own write
+    look correct, which is the metadata dictionary's problem restated.
+    """
+    from auditctl.validation import validate_resolved_context
+
+    with pytest.raises(ValueError, match="unknown resolved_context field"):
+        validate_resolved_context(
+            {
+                "resolved_context": {
+                    **resolve_audit_context(cwd=_repo(tmp_path, "alpha"), env={}).as_record(
+                        tmp_path / "alpha"
+                    ),
+                    "published_from_actually": "/somewhere/else",
+                }
+            }
+        )

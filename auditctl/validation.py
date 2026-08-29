@@ -31,6 +31,20 @@ ACTIONQ_TERMINAL_REASON_CODES = frozenset(
     }
 )
 ACTIONQ_SESSION_ID_MAX_BYTES = 128
+
+#: The resolver's own account of the write, attached by `auditctl add` and by nothing else.
+#:
+#: Deliberately NOT part of ENVELOPE_FIELDS. That set is validated all-or-nothing -- if any
+#: member is present every member must be -- so adding a field to it would invalidate every
+#: event written before today, including the 1593 already on disk. This one is optional by
+#: construction: absent on historical events, complete when present.
+RESOLVED_CONTEXT_FIELDS = (
+    "repo_id",
+    "repo_root",
+    "artifacts_root",
+    "published_from",
+    "resolution_source",
+)
 ENVELOPE_FIELDS = {
     "event_id",
     "schema_version",
@@ -213,6 +227,30 @@ def with_observation_envelope(
     }
 
 
+def validate_resolved_context(event: dict[str, Any]) -> None:
+    """Optional when absent, complete when present.
+
+    Partial context is worse than none: a reader who finds `published_from` missing from
+    half the events cannot tell "this write did not record it" from "this write came from
+    the repository itself", and that ambiguity is the whole defect this field exists to
+    remove. So the field is either entirely absent or entirely there.
+    """
+    if "resolved_context" not in event:
+        return
+    context = event["resolved_context"]
+    if not isinstance(context, dict):
+        raise ValueError("resolved_context must be an object")
+    missing = sorted(set(RESOLVED_CONTEXT_FIELDS) - set(context))
+    if missing:
+        raise ValueError(f"incomplete resolved_context; missing: {', '.join(missing)}")
+    unknown = sorted(set(context) - set(RESOLVED_CONTEXT_FIELDS))
+    if unknown:
+        raise ValueError(f"unknown resolved_context field(s): {', '.join(unknown)}")
+    for key in RESOLVED_CONTEXT_FIELDS:
+        if not isinstance(context[key], str) or not context[key]:
+            raise ValueError(f"resolved_context.{key} must be a non-empty string")
+
+
 def validate_event_object(event: dict[str, Any]) -> dict[str, Any]:
     required = {"id", "ts", "type", "actor", "summary", "refs", "source", "metadata", "created_at"}
     missing = sorted(required - set(event))
@@ -232,6 +270,7 @@ def validate_event_object(event: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{key} must be a non-empty string")
     if event.get("detail") is not None and not isinstance(event["detail"], str):
         raise ValueError("detail must be a string or null")
+    validate_resolved_context(event)
     present_envelope_fields = ENVELOPE_FIELDS & set(event)
     if present_envelope_fields:
         missing_envelope_fields = sorted(ENVELOPE_FIELDS - set(event))

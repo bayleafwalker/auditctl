@@ -36,6 +36,35 @@ class AuditContext:
         """The shard this context writes to. Never recompute this from parts."""
         return shard_path(self.artifacts_root, self.repo_id, ts)
 
+    def as_record(self, published_from: Path) -> dict[str, str]:
+        """This context, in the shape an event carries it.
+
+        Resolving correctly is not enough on its own. `AUDITCTL_DB` can still relocate
+        identity, index and shard *together*, and a redirect that moves all three leaves
+        no contradiction for the fail-closed check above to find -- both stores validate
+        clean afterwards, because both are clean. Measured 2026-08-29; see
+        agentops docs/evidence/measurements/2026-08-29-coherent-context-redirect.md.
+
+        What makes such a write recoverable is the same thing that made the August
+        misrouting recoverable: a record of where it came from. That one was incoherent,
+        so the mismatch between index and shard *was* the evidence. A coherent redirect
+        has no such mismatch, so the origin has to be written down at the moment it is
+        still known. `published_from` is that origin -- the directory the walk started
+        at -- and `resolution_source` is how the answer was reached.
+
+        This is deliberately a record and not a check. Publishing into another repository's
+        store is a legitimate thing to do on purpose; refusing it would outlaw the
+        override rather than account for it. auditctl records conformance, it does not
+        state desired state.
+        """
+        return {
+            "repo_id": self.repo_id,
+            "repo_root": str(self.repo_root),
+            "artifacts_root": str(self.artifacts_root),
+            "published_from": str(published_from),
+            "resolution_source": self.resolution_source,
+        }
+
 
 REPO_ID_FILE = ".auditctl-id"
 _REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")

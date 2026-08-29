@@ -41,8 +41,19 @@ PATH="$PGBIN:$PATH" .venv/bin/python -m pytest tests/ -q
 
 Result: **133 passed, 1 skipped** — the same PostgreSQL 18.6, the same nine central
 integration tests, no daemon involved. The store is a directory of realized paths; the
-daemon is only needed to *build or fetch* one that is not there yet. Once a version has
-been used successfully even once, it stays usable.
+daemon is only needed to *build or fetch* one that is not there yet.
+
+**But do not read that as durable.** An earlier version of this page said "once a version
+has been used successfully even once, it stays usable". That was falsified the same day:
+the run above succeeded at 19:4x, and by 22:4x `/nix/store` held **no postgresql path at
+all** — the exact directory named above was gone, and the same command failed with ten
+skips instead of one. A realized path survives until something collects it, which is not a
+guarantee and not under this procedure's control. The daemon was healthy again by then, so
+`nix shell` simply re-fetched it and the suite was green at 133 again.
+
+So the ordering is: try the daemon first, fall back to a realized path when it is down, and
+**check the skip count either way** — the fallback going missing looks exactly like the
+fallback working, because both print a green summary.
 
 The general lesson is the one this page already carries in another form: a tool being
 unavailable is not the same fact as a capability being unavailable, and the difference
