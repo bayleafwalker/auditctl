@@ -46,13 +46,35 @@ skipped gate is a gate that did not run.
 
 ## Consequence for the release
 
-`auditctl` 0.1.3 was blocked on this and is no longer blocked by it. Note that
-`tests/test_release_contract.py` pins the version literally
-(`assert auditctl.__version__ == "0.1.2"`), so a bump updates that assertion together with
-`pyproject.toml` and the adapter/schema-runtime digest locks the same test validates.
+0.1.3 was blocked on this, was unblocked by it, and **shipped on 2026-08-29**
+(`auditctl-v0.1.3`, wheel sha256 `f3d389ad...`). The section below is kept because the
+bump procedure recurs, not because the release is still pending.
 
-Releasing matters here rather than being housekeeping: the `rebuild` guard that refuses
-index-only events (`d88a34c`) exists only on `main`. The installed 0.1.2 still reports
-`Validated 5 shard(s): 51 event(s).` for an index holding 52 — success, while silently
-dropping the event. Until 0.1.3 ships, the D3 gate is correct in source and absent
-everywhere it runs.
+`tests/test_release_contract.py` pins the version literally, so a bump updates that
+assertion together with `pyproject.toml` and the adapter/schema-runtime digest locks the
+same test validates. A bump also touches `pyproject.toml` and `README.md`, which are
+*inside* the two attested implementation trees in `tests/test_verification_contracts.py` —
+so it necessarily invalidates both packet digests. Regenerate them **and** re-measure the
+packet evidence fields, as 6131036 did; recomputing a digest without re-running the
+verification would re-attest a result to a tree it was never measured on.
+
+Releasing mattered here rather than being housekeeping. Before 0.1.3, the `rebuild` guard
+that refuses index-only events (`d88a34c`) existed only on `main`, so the D3 gate was
+correct in source and absent everywhere it actually ran. Measured on the workstation
+against the real agentops store, same command, both versions:
+
+| Installed | Result |
+|---|---|
+| 0.1.2 | validated the shards, **exit 0** |
+| 0.1.3 | `rebuild rejected [index_only_events]` — 40 events no shard carries, **exit 1** |
+
+That gap is now closed end to end: 0.1.3 is installed on the workstation, pinned by the
+vuoro composition, and served by vuoro-shared via vuoro-service 0.1.57.
+
+### The 40 index-only events are a separate, open finding
+
+The guard did not create them; it revealed them. Some publisher is indexing without
+appending to a shard — sources `claude-hook`, `friction-skill`, `hybrid-dispatch` and
+`metanarrative`, on 2026-08-26 and 2026-08-29. Shards are authoritative, so those events
+are currently unbacked. Find the publisher and re-emit; do not reach for
+`--allow-index-only`, which accepts the loss rather than repairing it.
