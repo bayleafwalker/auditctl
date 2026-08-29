@@ -110,16 +110,33 @@ def resolve_audit_context(
     raw_root = env_map.get("AUDITCTL_ARTIFACTS_ROOT")
     if raw_root:
         explicit_root = Path(raw_root).expanduser().resolve()
-        if explicit_root != repo_root:
+        # Ancestor-or-equal, not equality. Two conventions are in deliberate use across
+        # this fleet and both are coherent:
+        #
+        #   co-rooted  root == repo_root          (agentops, vuoro, scribectl)
+        #   pooled     root is an ancestor of it  (sprintctl, kctl, cred-broker, ...)
+        #
+        # Pooling is safe because `repo_id` namespaces the shard directory beneath the
+        # shared root, so the pairing stays unambiguous. What is never safe is a root
+        # *below* the resolved repository, or off its line entirely: that writes the
+        # shard under some other repository's tree while the index stays here. That is
+        # exactly the 2026-08-29 geometry -- repo_id `dev` indexed at /projects/dev with
+        # a root of /projects/dev/agentops, a descendant.
+        #
+        # Equality alone would have outlawed five repositories' committed .envrc on the
+        # first `add`, which is this contract's own falsifier: a fail-closed rule people
+        # route around is worse than the silent preference it replaced.
+        if explicit_root != repo_root and not repo_root.is_relative_to(explicit_root):
             raise ValueError(
                 "AUDITCTL_ARTIFACTS_ROOT does not agree with the resolved repository:\n"
                 f"  artifacts root : {explicit_root}\n"
                 f"  repository     : {repo_root}  (via {source})\n"
                 f"  repo_id        : {paths.repo_id}\n"
-                "Shards would be written under a repository that does not hold the index "
-                "they belong to, so `rebuild` would report them as index-only. Unset "
-                "AUDITCTL_ARTIFACTS_ROOT to use the resolved repository, or run from "
-                "within the repository you intend to write to."
+                "The root must be the repository itself or an ancestor of it. This one is "
+                "neither, so shards would be written under a tree that does not hold the "
+                "index they belong to, and `rebuild` would report them as index-only. "
+                "Unset AUDITCTL_ARTIFACTS_ROOT to use the resolved repository, or run "
+                "from within the repository you intend to write to."
             )
         source = f"{source}+explicit-root"
         artifacts_root = explicit_root

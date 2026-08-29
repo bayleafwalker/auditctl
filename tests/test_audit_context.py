@@ -70,6 +70,48 @@ def test_a_root_that_merely_confirms_the_index_is_accepted_and_recorded(tmp_path
     assert context.resolution_source == "index-marker+explicit-root"
 
 
+def test_a_pooled_root_above_the_repository_is_legitimate_and_accepted(tmp_path: Path) -> None:
+    """Two conventions coexist deliberately; equality alone would outlaw one of them.
+
+    Co-rooted repos set the root to the repo (agentops, vuoro, scribectl). Pooled repos
+    set it to a shared ancestor with a repo-local index (sprintctl, kctl, cred-broker,
+    bindery-core, and auditctl itself). Pooling is coherent because `repo_id` namespaces
+    the shard directory beneath the shared root.
+
+    An equality check would have failed the first `add` in five repositories whose .envrc
+    is committed and in use -- firing this contract's own falsifier about fail-closed
+    rules that callers route around.
+    """
+    workspace = tmp_path / "workspace"
+    repo = _repo(workspace, "pooled-repo", index=True)
+
+    context = resolve_audit_context(
+        cwd=repo, env={"AUDITCTL_ARTIFACTS_ROOT": str(workspace)}
+    )
+
+    assert context.repo_id == "pooled-repo"
+    assert context.artifacts_root == workspace
+    assert context.index_path == repo / ".auditctl" / "auditctl.db"
+    # Namespaced beneath the shared root, so two pooled repos cannot collide.
+    assert context.shard_for("2026-08-29T10:00:00Z") == (
+        workspace / "_artifacts" / "pooled-repo" / "audit" / "events-2026-08-29.ndjson"
+    )
+
+
+def test_a_root_below_the_repository_is_the_defect_geometry_and_is_refused(tmp_path: Path) -> None:
+    """The 2026-08-29 shape, stated as geometry rather than as an instance.
+
+    repo_id `dev` indexed at /projects/dev with a root of /projects/dev/agentops -- a
+    *descendant*. The shard lands inside another repository's tree while the index stays
+    put. Pooling roots upward; this roots downward, and the two must not be confused.
+    """
+    workspace = _repo(tmp_path, "workspace", index=True, git=False)
+    inner = _repo(workspace, "some-other-repo", index=True)
+
+    with pytest.raises(ValueError, match="must be the repository itself or an ancestor"):
+        resolve_audit_context(cwd=workspace, env={"AUDITCTL_ARTIFACTS_ROOT": str(inner)})
+
+
 def test_an_index_beats_a_nearer_git_in_a_nested_repository(tmp_path: Path) -> None:
     """The case that defeated the first repair.
 
