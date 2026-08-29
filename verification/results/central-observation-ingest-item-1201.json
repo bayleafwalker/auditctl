@@ -5,7 +5,7 @@
     "doc_id": "auditctl-vuoro-served-audit-alignment",
     "revision": "git:0751c6a77cacc5a2dd016705a5d2e9756a3216f2"
   },
-  "implementation_sha": "sha256:central-implementation-v1:5763fb858117bb1a9fb65103519b8848331429dba215e544e5e2f7acd639f57b",
+  "implementation_sha": "sha256:central-implementation-v1:327778a7a5872bbc5fb59fc9be4c48b72455c67c86d7a71e6da3ad55bb1685c6",
   "depth": 2,
   "environment": {
     "backend": "disposable-local-postgresql",
