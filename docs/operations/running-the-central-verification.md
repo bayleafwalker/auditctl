@@ -24,6 +24,31 @@ Nix supplies them per-command, with no system install and no `sudo`:
 nix shell nixpkgs#postgresql --command bash -c '.venv/bin/python -m pytest tests/ -q'
 ```
 
+### When the nix daemon is unavailable
+
+`nix shell` needs `nix-daemon`; an already-realized store path does not. On 2026-08-29
+the daemon stopped answering — healthy process, listening socket, empty backlog, no
+errors logged, but every connection reset before it reached `accept()`, and restarting
+it needs root this account does not have. That looked like a hard blocker and was not:
+
+```bash
+PGBIN=$(for d in /nix/store/*postgresql-18*/bin; do
+          [ -x "$d/initdb" ] && [ -x "$d/pg_ctl" ] &&
+          "$d/postgres" --version | awk -v p="$d" '{print $3, p}'
+        done | sort -V | tail -1 | awk '{print $2}')
+PATH="$PGBIN:$PATH" .venv/bin/python -m pytest tests/ -q
+```
+
+Result: **133 passed, 1 skipped** — the same PostgreSQL 18.6, the same nine central
+integration tests, no daemon involved. The store is a directory of realized paths; the
+daemon is only needed to *build or fetch* one that is not there yet. Once a version has
+been used successfully even once, it stays usable.
+
+The general lesson is the one this page already carries in another form: a tool being
+unavailable is not the same fact as a capability being unavailable, and the difference
+is usually one invocation away. Check whether the thing you need is already on disk
+before recording a blocker.
+
 Verified on the workstation 2026-08-29 with PostgreSQL 18.6:
 
 | Invocation | Result |
