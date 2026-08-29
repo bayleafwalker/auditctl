@@ -66,15 +66,36 @@ against the real agentops store, same command, both versions:
 | Installed | Result |
 |---|---|
 | 0.1.2 | validated the shards, **exit 0** |
-| 0.1.3 | `rebuild rejected [index_only_events]` — 40 events no shard carries, **exit 1** |
+| 0.1.3 | `rebuild rejected [index_only_events]`, **exit 1** |
 
 That gap is now closed end to end: 0.1.3 is installed on the workstation, pinned by the
 vuoro composition, and served by vuoro-shared via vuoro-service 0.1.57.
 
-### The 40 index-only events are a separate, open finding
+### Correction: the "40 index-only events" reported here were an artifact of the check
 
-The guard did not create them; it revealed them. Some publisher is indexing without
-appending to a shard — sources `claude-hook`, `friction-skill`, `hybrid-dispatch` and
-`metanarrative`, on 2026-08-26 and 2026-08-29. Shards are authoritative, so those events
-are currently unbacked. Find the publisher and re-emit; do not reach for
-`--allow-index-only`, which accepts the loss rather than repairing it.
+**The original text of this section was wrong and is retracted.** It reported 40 events
+across four publishers as unbacked, and called it an open publisher defect. Both the
+number and the diagnosis were produced by a mis-scoped invocation: `--from-ndjson` pointed
+at the `agentops`-scope shards while the resolved index was the workspace `dev`-scope
+store. Comparing an index against a *different scope's* shards manufactures an arbitrary
+index-only count. The four publisher names were simply the sources present in the index.
+
+What was actually wrong was smaller and different in kind: **13 events, one publisher, and
+misrouted rather than missing.** `artifacts-root.default` in agentops named a single
+repository, and the hook that reads it is symlinked into every repo, so sessions indexed at
+their own root and appended under agentops. Fixed in agentops `5757779` and `a44f01d`; the
+events were merged back verbatim. Set and digest equality were verified across the repair:
+no id lost, no line altered, no duplicate, and `index ⊆ shards` with zero index-only.
+
+Two lessons, both cheaper to read than to rediscover:
+
+- **Pair an index only with its own scope's shards.** `rebuild` cannot tell a wrong `--from-ndjson`
+  from real loss, and its message reads like loss either way. Confirm `repo_id` and the root
+  agree before believing any count.
+- **Re-run the check after applying a fix, never infer success from having applied it.** The
+  first repair here looked correct and was still writing strays; only re-running found it.
+  This is a required postcondition of a repair, not a good habit.
+
+The release above stands independently of all this: it was justified by the guard existing
+only on `main` while the installed 0.1.2 reported success on an index-only store, which is
+true regardless of how many events any particular store held.
