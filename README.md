@@ -23,7 +23,7 @@ not published to PyPI). For a reproducible install, download the wheel from
 the desired release and compare its SHA-256 with the release notes:
 
 ```bash
-pipx install ./auditctl-0.1.5-py3-none-any.whl
+pipx install ./auditctl-0.1.6-py3-none-any.whl
 ```
 
 ```bash

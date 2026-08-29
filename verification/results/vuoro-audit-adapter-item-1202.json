@@ -5,7 +5,7 @@
     "doc_id": "auditctl-central-observation-ingest",
     "revision": "sha256:df9ca3fadd6b9b5d314338126dc5b06db2873bca15851bcbcaa933a5489e7173"
   },
-  "implementation_sha": "sha256:vuoro-audit-adapter-v1:f833bec3676cdecdc6ce541849d9c75014c2a171b7bfda844c3f38cd715ed6ee",
+  "implementation_sha": "sha256:vuoro-audit-adapter-v1:dbfd42b9d527749d7feb6a5a4957a43ddb5acf6371c00b6aee35512a09b4a770",
   "depth": 2,
   "environment": {
     "backend": "temporary-local-SQLite-NDJSON-and-disposable-PostgreSQL",
@@ -102,7 +102,7 @@
         "vuoro-adapter-kit GitHub release wheel URL is pinned with digest sha256:0037898a4c9f01720a42302365b0172ecd203732070326ea2abdf549a44bf0c2",
         "uv.lock records the same immutable URL and digest",
         "the stripped catalog JSON is exactly 9399 bytes with SHA-256 0b7a318efa64d7f2556d1bed086f0dad6c2d6268ce692333fe620e9c26b47590",
-        "the complete auditctl suite passed 133 tests with one intentional stale-wheel contract skip; nine PostgreSQL integration tests ran against disposable PostgreSQL 18.6"
+        "the complete auditctl suite passed 137 tests with one intentional stale-wheel contract skip; nine PostgreSQL integration tests ran against disposable PostgreSQL 18.6"
       ]
     }
   ],
