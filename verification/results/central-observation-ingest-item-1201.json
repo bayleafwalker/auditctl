@@ -5,13 +5,13 @@
     "doc_id": "auditctl-vuoro-served-audit-alignment",
     "revision": "git:0751c6a77cacc5a2dd016705a5d2e9756a3216f2"
   },
-  "implementation_sha": "sha256:central-implementation-v1:d8a0d0cac469d01594ea206eb26219d588552c384b0286b97d9cb4806ea62e6d",
+  "implementation_sha": "sha256:central-implementation-v1:5763fb858117bb1a9fb65103519b8848331429dba215e544e5e2f7acd639f57b",
   "depth": 2,
   "environment": {
     "backend": "disposable-local-postgresql",
     "isolation": "PostgreSQL READ COMMITTED transactions with per-schema advisory migration locks, per-event advisory locks, and per-origin stream row locks",
     "tool_versions": {
-      "postgresql": "18.4",
+      "postgresql": "18.6",
       "python": "3.12.12",
       "pytest": "9.1.1"
     }
