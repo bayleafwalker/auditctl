@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,6 +11,9 @@ class AuditPaths:
     repo_root: Path
     repo_id: str
     db_path: Path
+    # How the repository was decided. Carried, not recomputed by callers -- a caller
+    # that re-derives this is doing the thing that caused the defect.
+    source: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -31,6 +35,72 @@ class AuditContext:
     def shard_for(self, ts: str) -> Path:
         """The shard this context writes to. Never recompute this from parts."""
         return shard_path(self.artifacts_root, self.repo_id, ts)
+
+
+REPO_ID_FILE = ".auditctl-id"
+_REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def _worktree_main_root(repo_root: Path) -> Path | None:
+    """The main repository backing a linked worktree, or None if this is not one.
+
+    A worktree's `.git` is a *file* holding `gitdir: <main>/.git/worktrees/<name>`.
+    Read it directly rather than shelling out: this runs inside publisher hooks whose
+    PATH is the one thing that cannot be trusted.
+
+    Worktrees are why `repo_id` was wrong in practice. A worktree has no `.auditctl`
+    (it is gitignored), so the marker walk climbs past it: the agentops worktree under
+    `_projects/vuoro-dispatch-ready/members/` resolved to `repo_id="dev"`, and one under
+    $HOME resolved to its own basename and took its evidence with it when deleted.
+    `_artifacts/wt-counter/` and `wt-review/` are what that leaves behind.
+    """
+    dot_git = repo_root / ".git"
+    if not dot_git.is_file():
+        return None
+    try:
+        text = dot_git.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+    match = re.match(r"gitdir:\s*(.+)$", text)
+    if not match:
+        return None
+    gitdir = Path(match.group(1).strip())
+    if not gitdir.is_absolute():
+        gitdir = (repo_root / gitdir).resolve()
+    # <main>/.git/worktrees/<name>
+    if gitdir.parent.name == "worktrees" and gitdir.parent.parent.name == ".git":
+        return gitdir.parent.parent.parent
+    return None
+
+
+def _declared_repo_id(repo_root: Path) -> str | None:
+    """A repository's own declaration of its identity, if it makes one.
+
+    Identity derived from a directory basename is an accident of geography: it changes
+    when the directory is renamed and differs between hosts that check out to different
+    paths. A tracked `.auditctl-id` at the repo root travels with the repository and is
+    identical in every worktree and on every host.
+
+    It is not read from `.auditctl/`, which is gitignored and so would not travel, and
+    not from an environment variable, which shared-scope code can set for repositories
+    it knows nothing about -- the defect class this whole change exists to close.
+    """
+    candidate = repo_root / REPO_ID_FILE
+    try:
+        if not candidate.is_file():
+            return None
+        value = candidate.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+    if not value:
+        return None
+    if not _REPO_ID_RE.match(value):
+        raise ValueError(
+            f"{candidate} declares an unusable repo id: {value!r}. "
+            "It becomes a directory name under the artifacts root, so it must match "
+            "[A-Za-z0-9][A-Za-z0-9._-]{0,63} -- no separators, no traversal."
+        )
+    return value
 
 
 def _find_upward(start: Path, predicate) -> Path | None:
@@ -60,14 +130,34 @@ def resolve_paths(cwd: Path | None = None, env: dict[str, str] | None = None) ->
         repo_root = _repo_root_from_db_path(db_path)
         if repo_root is None:
             raise ValueError("cannot resolve repo root from AUDITCTL_DB; run inside the repo or use .auditctl/auditctl.db")
-        return AuditPaths(repo_root=repo_root, repo_id=repo_root.name, db_path=db_path)
+        return AuditPaths(
+            repo_root=repo_root,
+            repo_id=_declared_repo_id(repo_root) or repo_root.name,
+            db_path=db_path,
+            source="explicit-db",
+        )
+
+    # A linked worktree belongs to its main repository, whatever indexes sit above it.
+    # This is checked before the marker walk precisely because the worktree has no index
+    # of its own, so the walk would otherwise climb past it into an unrelated workspace.
+    worktree_root = _find_upward(start, lambda p: _worktree_main_root(p) is not None)
+    if worktree_root is not None:
+        main_root = _worktree_main_root(worktree_root)
+        assert main_root is not None
+        return AuditPaths(
+            repo_root=main_root,
+            repo_id=_declared_repo_id(main_root) or main_root.name,
+            db_path=main_root / ".auditctl" / "auditctl.db",
+            source="worktree-main",
+        )
 
     marker_root = _find_upward(start, lambda p: (p / ".auditctl" / "auditctl.db").exists())
     if marker_root is not None:
         return AuditPaths(
             repo_root=marker_root,
-            repo_id=marker_root.name,
+            repo_id=_declared_repo_id(marker_root) or marker_root.name,
             db_path=marker_root / ".auditctl" / "auditctl.db",
+            source="index-marker",
         )
 
     git_root = _find_upward(start, lambda p: (p / ".git").exists())
@@ -75,8 +165,9 @@ def resolve_paths(cwd: Path | None = None, env: dict[str, str] | None = None) ->
         raise ValueError("not inside an auditctl-enabled repo; set AUDITCTL_DB.")
     return AuditPaths(
         repo_root=git_root,
-        repo_id=git_root.name,
+        repo_id=_declared_repo_id(git_root) or git_root.name,
         db_path=git_root / ".auditctl" / "auditctl.db",
+        source="git-marker",
     )
 
 
@@ -99,12 +190,9 @@ def resolve_audit_context(
     env_map = os.environ if env is None else env
     paths = resolve_paths(cwd=cwd, env=env_map)
 
-    if env_map.get("AUDITCTL_DB"):
-        source = "explicit-db"
-    elif (paths.repo_root / ".auditctl" / "auditctl.db").exists():
-        source = "index-marker"
-    else:
-        source = "git-marker"
+    source = paths.source
+    if _declared_repo_id(paths.repo_root):
+        source = f"{source}+declared-id"
 
     repo_root = paths.repo_root.expanduser().resolve()
     raw_root = env_map.get("AUDITCTL_ARTIFACTS_ROOT")

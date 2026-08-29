@@ -200,3 +200,86 @@ def test_context_is_immutable(tmp_path: Path) -> None:
     context = resolve_audit_context(cwd=_repo(tmp_path, "solo", index=True), env={})
     with pytest.raises(Exception):
         context.artifacts_root = tmp_path  # type: ignore[misc]
+
+
+# --- identity ----------------------------------------------------------------------
+# `repo_id` names the shard directory, so it is the durable identity of a body of
+# evidence. Deriving it from a directory basename makes it an accident of geography:
+# it changes when the directory is renamed, differs between hosts that check out to
+# different paths, and for a worktree it is either wrong or transient.
+
+
+def _worktree(main: Path, at: Path, name: str) -> Path:
+    """A linked worktree, in the shape git actually creates: `.git` is a file."""
+    at.mkdir(parents=True, exist_ok=True)
+    (main / ".git" / "worktrees" / name).mkdir(parents=True, exist_ok=True)
+    (at / ".git").write_text(
+        f"gitdir: {main / '.git' / 'worktrees' / name}\n", encoding="utf-8"
+    )
+    return at
+
+
+def test_a_worktree_is_attributed_to_its_main_repository(tmp_path: Path) -> None:
+    """The verified production failure.
+
+    A worktree has no `.auditctl` -- it is gitignored -- so the marker walk climbed
+    past it. The agentops worktree under `_projects/.../members/` resolved to
+    `repo_id="dev"`, blending its evidence into the workspace pool under the wrong
+    identity.
+    """
+    workspace = _repo(tmp_path, "workspace", index=True, git=False)
+    main = _repo(tmp_path, "realrepo", index=True)
+    tree = _worktree(main, workspace / "members" / "realrepo", "realrepo")
+
+    context = resolve_audit_context(cwd=tree, env={})
+
+    assert context.repo_id == "realrepo"
+    assert context.repo_root == main
+    assert context.resolution_source == "worktree-main"
+    # Evidence belongs in the durable home, not the disposable checkout.
+    assert context.index_path == main / ".auditctl" / "auditctl.db"
+    assert not context.shard_for("2026-08-29T10:00:00Z").is_relative_to(tree)
+
+
+def test_a_worktree_outside_the_workspace_does_not_take_its_evidence_with_it(
+    tmp_path: Path,
+) -> None:
+    """The second live case: a worktree under $HOME resolved to its own basename,
+    so its shards died with the checkout. `_artifacts/wt-counter/` is that residue."""
+    main = _repo(tmp_path, "realrepo", index=True)
+    tree = _worktree(main, tmp_path / "elsewhere" / "realrepo-some-branch", "wt")
+
+    context = resolve_audit_context(cwd=tree, env={})
+
+    assert context.repo_id == "realrepo"
+    assert context.repo_root == main
+
+
+def test_a_declared_id_beats_the_directory_name(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "checked-out-under-some-other-name", index=True)
+    (repo / ".auditctl-id").write_text("stable-identity\n", encoding="utf-8")
+
+    context = resolve_audit_context(cwd=repo, env={})
+
+    assert context.repo_id == "stable-identity"
+    assert "declared-id" in context.resolution_source
+    assert context.shard_for("2026-08-29T10:00:00Z").parent.parent.name == "stable-identity"
+
+
+def test_a_declared_id_may_not_escape_the_artifacts_root(tmp_path: Path) -> None:
+    """`repo_id` becomes a path segment, so a declaration is untrusted input."""
+    repo = _repo(tmp_path, "solo", index=True)
+    (repo / ".auditctl-id").write_text("../../etc\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unusable repo id"):
+        resolve_audit_context(cwd=repo, env={})
+
+
+def test_identity_is_not_taken_from_the_environment(tmp_path: Path) -> None:
+    """Shared-scope code sets env vars for repos it knows nothing about -- that is the
+    defect class. Identity must come from the repository, never from the caller."""
+    repo = _repo(tmp_path, "solo", index=True)
+
+    context = resolve_audit_context(cwd=repo, env={"AUDITCTL_REPO_ID": "something-else"})
+
+    assert context.repo_id == "solo"
