@@ -19,7 +19,13 @@ ACTIONQ_SESSION_EXIT_BOUNDS = {
     "dispatch_result_ref": 128,
     "dispatch_result_digest": 71,
 }
-ACTIONQ_TERMINAL_REASON_CODES = frozenset(
+#: How a dispatched unit ended. Shared vocabulary, not an ActionQ-owned one.
+#:
+#: It was written for the ActionQ daemon's `session.exit` projection and named after it.
+#: That daemon was retired on 2026-08-22 and the vocabulary outlived it, so the name now
+#: describes the first writer rather than the contract. Producers of `dispatch.exit` --
+#: today the SubagentStop hook -- use the same codes, and must be validated against them.
+TERMINAL_REASON_CODES = frozenset(
     {
         "completed",
         "process-exit",
@@ -30,7 +36,22 @@ ACTIONQ_TERMINAL_REASON_CODES = frozenset(
         "crash-inferred",
     }
 )
+#: Retained name for the ActionQ result projection and its existing callers.
+ACTIONQ_TERMINAL_REASON_CODES = TERMINAL_REASON_CODES
 ACTIONQ_SESSION_ID_MAX_BYTES = 128
+
+#: Bounds for the harness-sourced dispatch-exit record.
+#:
+#: Deliberately smaller in scope than ACTIONQ_SESSION_EXIT_BOUNDS: a hook observes that a
+#: dispatched unit ended and why. It has no action id, no immutable result artifact, and no
+#: authority to claim one. Requiring ActionQ's result-identity binding here would either
+#: reject every honest hook record or invite a fabricated digest.
+DISPATCH_EXIT_BOUNDS = {
+    "terminal_reason": 256,
+    "session": 128,
+    "agent_id": 128,
+    "project": 256,
+}
 
 #: The resolver's own account of the write, attached by `auditctl add` and by nothing else.
 #:
@@ -173,6 +194,47 @@ def validate_actionq_session_exit_metadata(event: dict[str, Any]) -> None:
         raise ValueError("dispatch result reference and digest must identify the same result")
 
 
+def validate_dispatch_exit_metadata(event: dict[str, Any]) -> None:
+    """Validate the harness-sourced record that a dispatched unit ended.
+
+    Binds on the event type alone, not on a source name. The predecessor contract keyed on
+    `source == "actionq-daemon"`, so when that daemon was retired the validation stopped
+    applying while the vocabulary stayed live -- a rule that describes its first writer
+    rather than its subject stops being enforced the moment the writer changes. The subject
+    here is "a dispatched unit ended", whoever observed it.
+
+    `terminal_reason` is required, because a dispatch-exit record without one answers that
+    something ended and not what happened, which is the record the loss predicate cannot
+    use. Everything else is optional-when-absent and bounded when present: a hook can be
+    handed an event with no transcript and must still be able to say so.
+    """
+    if event.get("type") != "dispatch.exit":
+        return
+
+    metadata = event["metadata"]
+
+    terminal_reason = metadata.get("terminal_reason")
+    if not isinstance(terminal_reason, str) or not terminal_reason:
+        raise ValueError("dispatch.exit requires a non-empty terminal_reason")
+    if terminal_reason not in TERMINAL_REASON_CODES:
+        allowed = ", ".join(sorted(TERMINAL_REASON_CODES))
+        raise ValueError(f"terminal_reason must be a recognized safe reason code: {allowed}")
+
+    for key, limit in DISPATCH_EXIT_BOUNDS.items():
+        value = metadata.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"{key} must be a string when present")
+        if len(value.encode("utf-8")) > limit:
+            raise ValueError(f"{key} exceeds the {limit}-byte bound")
+
+    siblings = metadata.get("sibling_transcripts")
+    if siblings is not None:
+        if not isinstance(siblings, list) or not all(isinstance(s, str) for s in siblings):
+            raise ValueError("sibling_transcripts must be a list of strings when present")
+
+
 def canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
@@ -265,6 +327,7 @@ def validate_event_object(event: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(event["metadata"], dict):
         raise ValueError("metadata must be an object")
     validate_actionq_session_exit_metadata(event)
+    validate_dispatch_exit_metadata(event)
     for key in ("type", "actor", "summary", "source"):
         if not isinstance(event[key], str) or not event[key]:
             raise ValueError(f"{key} must be a non-empty string")

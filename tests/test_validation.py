@@ -137,3 +137,94 @@ def test_observation_envelope_rejects_digest_or_identity_drift() -> None:
         validate_event_object({**event, "summary": "changed"})
     with pytest.raises(ValueError, match="payload_sha256 does not match"):
         validate_event_object({**event, "payload_sha256": "0" * 64})
+
+
+def _dispatch_exit_event(**metadata_overrides: object) -> dict[str, object]:
+    """The record the SubagentStop hook actually writes, as a validatable event."""
+    metadata: dict[str, object] = {
+        "session": "probe-session-1",
+        "agent_id": "agent-1",
+        "project": "agentops",
+        "terminal_reason": "usage-limit",
+        "transcript_path": "/tmp/agent-1.jsonl",
+        "raw_tail": "session limit reached",
+        "sibling_transcripts": ["/tmp/agent-2.jsonl"],
+        "reset_source": "unparsed-local-string",
+    }
+    metadata.update(metadata_overrides)
+    return {
+        "id": "ad:01HWXYZ0000000000000000001",
+        "ts": "2026-08-30T06:00:00Z",
+        "type": "dispatch.exit",
+        "actor": "claude-hook",
+        "summary": "subagent ended in agentops: usage-limit",
+        "detail": None,
+        "refs": [],
+        "source": "claude-hook",
+        "metadata": metadata,
+        "created_at": "2026-08-30T06:00:01Z",
+    }
+
+
+def test_dispatch_exit_from_a_hook_is_validated() -> None:
+    """The contract binds on the event type, not on the name of its first writer.
+
+    The predecessor keyed terminal-reason validation on `source == "actionq-daemon"`.
+    When that daemon was retired the rule stopped applying and nothing said so, which is
+    how a live validator came to have no subject.
+    """
+    validate_event_object(_dispatch_exit_event())
+
+
+def test_dispatch_exit_rejects_an_unsafe_reason_code() -> None:
+    with pytest.raises(ValueError, match="recognized safe reason code"):
+        validate_event_object(_dispatch_exit_event(terminal_reason="ran-out-of-vibes"))
+
+
+def test_dispatch_exit_requires_a_terminal_reason() -> None:
+    """A dispatch-exit with no reason says something ended and not what happened.
+
+    That is precisely the record the loss predicate cannot use, so it is rejected
+    rather than stored.
+    """
+    with pytest.raises(ValueError, match="requires a non-empty terminal_reason"):
+        validate_event_object(_dispatch_exit_event(terminal_reason=None))
+
+
+def test_dispatch_exit_bounds_its_strings() -> None:
+    with pytest.raises(ValueError, match="session exceeds the 128-byte bound"):
+        validate_event_object(_dispatch_exit_event(session="s" * 129))
+
+
+def test_dispatch_exit_tolerates_the_fields_a_hook_cannot_fill() -> None:
+    """A unit that dies before producing a transcript still gets a record.
+
+    Optional-when-absent is the whole reason this contract is separate from ActionQ's
+    result projection, which requires an immutable artifact digest a hook cannot honestly
+    produce.
+    """
+    event = _dispatch_exit_event(
+        agent_id=None,
+        transcript_path=None,
+        sibling_transcripts=None,
+        terminal_reason="crash-inferred",
+    )
+    validate_event_object(event)
+
+
+def test_dispatch_exit_rejects_a_malformed_sibling_list() -> None:
+    with pytest.raises(ValueError, match="sibling_transcripts must be a list of strings"):
+        validate_event_object(_dispatch_exit_event(sibling_transcripts=[1, 2]))
+
+
+def test_actionq_result_projection_is_not_imposed_on_hook_records() -> None:
+    """The two contracts must not merge.
+
+    ActionQ's `session.exit` requires an action id, an artifact digest and an
+    `actionq:<session>` actor. A hook observing a subagent has none of those and no
+    authority to invent them; requiring them here would either reject every honest hook
+    record or invite a fabricated digest.
+    """
+    event = _dispatch_exit_event()
+    assert "action_id" not in event["metadata"]
+    validate_event_object(event)
