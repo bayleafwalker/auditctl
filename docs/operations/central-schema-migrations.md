@@ -3,7 +3,7 @@
 Central migrations are an explicit deployment action. Neither `auditctl` local
 startup nor the served runtime calls `migrate()` automatically.
 
-Auditctl 0.1.6 uses the immutable `vuoro-schema-runtime` 0.1.0 wheel for
+Auditctl 0.1.7 uses the immutable `vuoro-schema-runtime` 0.1.0 wheel for
 database-independent migration asset metadata, UTF-8 SHA-256 calculation,
 contiguous-version validation, strict PostgreSQL identifier quoting, schema
 placeholder rendering, and the pure migration-ledger verdict. Auditctl remains

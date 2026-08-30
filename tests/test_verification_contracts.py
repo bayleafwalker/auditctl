@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CENTRAL_CONTEXT_ID = "auditctl.central-observation-ingest"
 CENTRAL_IMPLEMENTATION_PATHS = (
     "auditctl.dispatch.json",
     "auditctl/central.py",
@@ -59,11 +60,21 @@ def test_central_ingest_context_keeps_observation_and_authority_separate():
 
 
 def test_central_result_digest_matches_the_packaged_implementation_tree():
-    packet = json.loads(
-        (
-            ROOT / "verification/results/central-observation-ingest-item-1201.json"
-        ).read_text(encoding="utf-8")
-    )
+    """Some result on record must have been observed against the packaged tree.
+
+    This asserted a single named packet until 2026-08-30, and that made every
+    version bump falsify it: `pyproject.toml` is inside the digested set, so
+    changing a version literal changes the digest of an implementation that did
+    not change. The only route back to green was to rewrite the packet's
+    `implementation_sha` -- and that packet is an observation, carrying its own
+    claims, counterexamples and notes about the run that produced them. Restamping
+    it makes that narrative describe a tree it was never run against, which is the
+    one thing a ledger must not do.
+
+    So the guarantee is kept and the singularity is dropped: the shipped tree must
+    have been verified, and earlier observations stay true about the trees they
+    were taken against.
+    """
     digest = hashlib.sha256()
     assert CENTRAL_IMPLEMENTATION_PATHS == tuple(sorted(CENTRAL_IMPLEMENTATION_PATHS))
     for relative_path in CENTRAL_IMPLEMENTATION_PATHS:
@@ -71,9 +82,29 @@ def test_central_result_digest_matches_the_packaged_implementation_tree():
         digest.update(b"\0")
         digest.update((ROOT / relative_path).read_bytes())
         digest.update(b"\0")
+    expected = f"sha256:central-implementation-v1:{digest.hexdigest()}"
 
-    assert packet["implementation_sha"] == (
-        f"sha256:central-implementation-v1:{digest.hexdigest()}"
+    packets = {
+        path.name: json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted((ROOT / "verification/results").glob("*.json"))
+    }
+    central = {
+        name: packet
+        for name, packet in packets.items()
+        if packet.get("context_id") == CENTRAL_CONTEXT_ID
+    }
+    assert central, f"no verification result declares context {CENTRAL_CONTEXT_ID}"
+
+    matching = [name for name, packet in central.items() if packet["implementation_sha"] == expected]
+    assert matching, (
+        f"no result for {CENTRAL_CONTEXT_ID} was observed against the packaged tree.\n"
+        f"  packaged: {expected}\n"
+        "  on record: "
+        + "\n             ".join(
+            f"{name}: {packet['implementation_sha']}" for name, packet in sorted(central.items())
+        )
+        + "\nRe-run the central verification (docs/operations/running-the-central-verification.md) "
+        "and add a result naming the work item that commissioned it. Do not edit an existing one."
     )
 
 

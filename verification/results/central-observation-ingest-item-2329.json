@@ -1,0 +1,53 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "auditctl.central-observation-ingest",
+  "contract_ref": {
+    "doc_id": "auditctl-vuoro-served-audit-alignment",
+    "revision": "git:0751c6a77cacc5a2dd016705a5d2e9756a3216f2"
+  },
+  "implementation_sha": "sha256:central-implementation-v1:cb3913dde79d627268f98c1acd231f4ebc83161cb1f456c11a3a06550049557b",
+  "depth": 2,
+  "environment": {
+    "backend": "disposable-local-postgresql",
+    "isolation": "PostgreSQL READ COMMITTED transactions with per-schema advisory migration locks, per-event advisory locks, and per-origin stream row locks",
+    "tool_versions": {
+      "postgresql": "18.6",
+      "python": "3.12.12",
+      "pytest": "9.1.1"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "kind": "re-verification-of-an-unchanged-implementation",
+    "suite": "tests/ under PostgreSQL realized through `nix shell nixpkgs#postgresql`",
+    "passed": 144,
+    "failed": 0,
+    "counterexamples_found": 0
+  },
+  "claims": [
+    {
+      "property": "the digested central implementation is byte-identical to the tree observed by agentops#1201, apart from the pyproject version literal",
+      "result": "established-by-diff",
+      "evidence": [
+        "`git diff 5f45f12..HEAD` over the seven CENTRAL_IMPLEMENTATION_PATHS is empty; 5f45f12 is the 0.1.6 release commit item-1201 was restamped against",
+        "the sole difference from 5f45f12 in this tree is pyproject.toml's `version = \"0.1.6\"` -> `\"0.1.7\"`",
+        "the changes released here -- c094ad4 and fb8ee82 -- touch validation.py, paths.py, cli.py and tests, none of which are in the digested set"
+      ]
+    },
+    {
+      "property": "the central observation-ingest suite, including the disposable-PostgreSQL integration tests, passes against this tree",
+      "result": "observed",
+      "evidence": [
+        "144 passed, 0 failed on 2026-08-30 with PostgreSQL 18.6 realized per docs/operations/running-the-central-verification.md",
+        "the run taken before this packet existed was 143 passed, 1 failed -- the single failure being the digest assertion reporting that no result had been observed against this tree"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "This is a re-verification commissioned by agentops#2329 for the 0.1.7 release. It does NOT restate the fault enumeration, history count or per-invariant evidence recorded by item-1201, because this run did not independently instrument them. Item-1201 remains the record of that observation, and it is unchanged.",
+    "The reason a new packet exists at all: pyproject.toml is inside the digested implementation set, so a version bump changes the digest of an implementation that did not change. Until 2026-08-30 the digest assertion named one packet, so the only route back to green was to rewrite that packet's implementation_sha -- which would make its claims, counterexamples and notes describe a tree they were never observed against. The 0.1.6 release did exactly that, so item-1201's stated implementation_sha post-dates the run it describes.",
+    "The assertion now requires that some result for this context was observed against the packaged tree, which keeps the guarantee that what ships has been verified while letting observations accumulate instead of overwriting each other.",
+    "The PostgreSQL instance was created under /tmp and stopped and removed by the test fixture; no shared or production database was addressed."
+  ]
+}
