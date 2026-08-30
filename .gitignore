@@ -10,3 +10,10 @@ build/
 dist/
 .auditctl/
 
+
+# Evidence for scopes this repository does not own. The artifacts root resolves
+# to the repository a write came from, so a publisher running here under another
+# scope lands it here. Only _artifacts/auditctl/ is this repository's to keep --
+# the same rule agentops states for itself.
+/_artifacts/*
+!/_artifacts/auditctl/
