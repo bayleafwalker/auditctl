@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from auditctl.paths import require_artifacts_root, resolve_paths, shard_path
+from auditctl.paths import resolve_paths, shard_path
 
 
 def test_resolve_paths_from_git_repo(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -19,12 +19,6 @@ def test_resolve_paths_from_explicit_db(repo_root: Path) -> None:
     paths = resolve_paths()
     assert paths.repo_id == "example-repo"
     assert paths.db_path == repo_root / ".auditctl" / "auditctl.db"
-
-
-def test_require_artifacts_root_errors_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("AUDITCTL_ARTIFACTS_ROOT", raising=False)
-    with pytest.raises(ValueError, match="AUDITCTL_ARTIFACTS_ROOT"):
-        require_artifacts_root()
 
 
 def test_shard_path_uses_daily_repo_layout(tmp_path: Path) -> None:

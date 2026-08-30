@@ -269,14 +269,6 @@ def resolve_audit_context(
     )
 
 
-def require_artifacts_root(env: dict[str, str] | None = None) -> Path:
-    env_map = os.environ if env is None else env
-    raw = env_map.get("AUDITCTL_ARTIFACTS_ROOT")
-    if not raw:
-        raise ValueError("AUDITCTL_ARTIFACTS_ROOT is required for audit writes.")
-    return Path(raw).expanduser()
-
-
 def shard_path(artifacts_root: Path, repo_id: str, ts: str) -> Path:
     day = ts[:10]
     return artifacts_root / "_artifacts" / repo_id / "audit" / f"events-{day}.ndjson"

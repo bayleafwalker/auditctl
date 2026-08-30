@@ -11,7 +11,7 @@ import click
 from . import db
 from .ids import new_event_id
 from .ndjson import ImportInputError, append_event, read_events, resolve_inputs
-from .paths import require_artifacts_root, resolve_audit_context, resolve_paths, shard_path
+from .paths import resolve_audit_context, resolve_paths, shard_path
 from .render import render_text
 from .validation import (
     canonical_json,
