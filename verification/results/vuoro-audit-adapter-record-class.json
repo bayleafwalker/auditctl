@@ -1,0 +1,72 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "auditctl.vuoro-audit-adapter",
+  "contract_ref": {
+    "doc_id": "auditctl-central-observation-ingest",
+    "revision": "sha256:df9ca3fadd6b9b5d314338126dc5b06db2873bca15851bcbcaa933a5489e7173"
+  },
+  "implementation_sha": "sha256:vuoro-audit-adapter-v1:10412cba6b6c4fd7ce1ee1add4c91f237e6f537b75de55361837f066831577e4",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary-local-SQLite-NDJSON-and-disposable-PostgreSQL",
+    "isolation": "PostgreSQL READ COMMITTED transactions with auditctl event advisory locks and origin-stream row locks; local artifacts confined to pytest temporary directories",
+    "tool_versions": {
+      "postgresql": "18.6",
+      "python": "3.12.12",
+      "pytest": "9.1.1"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 20,
+    "bounds": {
+      "postgresql_instances": 1,
+      "adapter_end_to_end_histories": 1,
+      "service_instances": 2,
+      "submission_attempts": 2,
+      "global_event_id_races": 12,
+      "catalog_operations": 5,
+      "read_limit": 100
+    },
+    "faults_exercised": [
+      "central-service-unavailable-during-local-append",
+      "delayed-observation-submission",
+      "lost-submit-response",
+      "service-process-restart-before-retry",
+      "missing-origin-sequence",
+      "duplicate-upload",
+      "concurrent-identical-upload",
+      "concurrent-global-event-id-reuse",
+      "runtime-role-mismatch",
+      "future-schema-version"
+    ],
+    "kind": "re-verification-after-widening-record_class"
+  },
+  "claims": [
+    {
+      "property": "widening record_class leaves the served adapter's operation surface and wire shapes unchanged",
+      "result": "example-tested",
+      "evidence": [
+        "the complete suite passed 146 tests with zero skips, including the five domain-qualified catalog operations, handler mappings, import isolation and bounded reads",
+        "auditctl/vuoro_adapter.py is unchanged by this work; only central.py, central_schema.py and the migration set moved",
+        "compatibility still reports the migrated runtime schema as compatible without invoking migration, now at installed 3 / minimum 2 / maximum 3"
+      ]
+    },
+    {
+      "property": "the adapter's local outbox, dual-write, rebuild and publisher paths are unaffected by the new record class",
+      "result": "concurrency-tested",
+      "evidence": [
+        "all ten disposable-PostgreSQL integration tests passed, including the service-restart outbox retry and the twelve global-event-id races",
+        "a decision and an observation on one origin stream round-tripped and read back in origin_seq order with their classes intact",
+        "records identical but for record_class produce different record_sha256, so deduplication cannot conflate them"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Commissioned by the owner ruling of 2026-09-01 admitting `decision` alongside `observation`. central.py and central_schema.py are inside this digested tree, so the change invalidated the previous attestation.",
+    "A new packet rather than a restamp of item-1202. That packet's claims, counterexamples and measured counts describe the tree it was run against, and it stays true about it.",
+    "test_vuoro_adapter_result_digest_matches_the_owned_implementation_tree previously named item-1202 directly, which forced a restamp on every change to the tree. It now matches any packet declaring this context, the same rule the central attestation already used.",
+    "This packet does not restate item-1202's fault enumeration or its twenty histories; this run did not independently instrument them. Item-1202 remains the record of that observation."
+  ]
+}

@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from .central_schema import require_runtime_compatibility
-from .validation import canonical_payload_json, validate_event_object
+from .validation import RECORD_CLASSES, canonical_payload_json, validate_event_object
 
 MAX_READ_LIMIT = 100
 EVENT_ID_LOCK_NAMESPACE = "auditctl-central-event-id"
@@ -93,8 +93,11 @@ def _optional_text(value: Any, field: str) -> str | None:
 def prepare_observation(event: dict[str, Any]) -> PreparedObservation:
     """Validate a local audit envelope and produce its central immutable hash."""
     validate_event_object(event)
-    if event.get("record_class") != "observation":
-        raise ValueError("central audit ingestion accepts observation records only")
+    if event.get("record_class") not in RECORD_CLASSES:
+        raise ValueError(
+            "central audit ingestion accepts these record classes only: "
+            + ", ".join(RECORD_CLASSES)
+        )
     if event.get("schema_version") != 1:
         raise ValueError(
             "central audit ingestion supports observation schema version 1"
@@ -124,7 +127,12 @@ def prepare_observation(event: dict[str, Any]) -> PreparedObservation:
         "origin_seq": origin_seq,
         "event_id": _required_text(event.get("event_id"), "event_id"),
         "schema_version": 1,
-        "record_class": "observation",
+        # Must be the record's own class, not a constant. The digest below is this
+        # record's immutable identity, and a judgement that hashed identically to an
+        # observation with the same fields would make the two indistinguishable at
+        # exactly the layer that exists to tell records apart. Observations still
+        # hash to what they always did, so no existing digest changes.
+        "record_class": event["record_class"],
         "event_type": _required_text(event.get("event_type"), "event_type"),
         "actor": _required_text(event.get("actor"), "actor"),
         "runtime_session_id": _optional_text(

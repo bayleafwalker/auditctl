@@ -52,6 +52,7 @@ def test_central_migration_assets_are_contiguous_and_immutable_inputs() -> None:
     assert "__SCHEMA__" in migrations[0].sql
     assert "record_class = 'observation'" in migrations[0].sql
     assert "ingest_receipt" in migrations[1].sql
+    assert "record_class IN ('observation', 'decision')" in migrations[2].sql
 
 
 def test_shared_runtime_preserves_exact_migration_asset_bytes_and_digests() -> None:
@@ -68,10 +69,12 @@ def test_shared_runtime_preserves_exact_migration_asset_bytes_and_digests() -> N
     assert [len(migration.sql.encode("utf-8")) for migration in migrations] == [
         1946,
         1740,
+        2202,
     ]
     assert [migration.sha256 for migration in migrations] == [
         "1f6aca04414ca90a41fda2bb894b0d4f9b5c937979fb677139515fdc25ed52be",
         "66db0101dccde630400ae4e954aa9999ba9e57361dc07a0787ed40eec9a40794",
+        "3c5b08c5e742b49b7ebcbbf8eb4b8e750039b691a1ea374cf0a3df79e12e1be8",
     ]
     assert all(
         migration.sha256
@@ -109,8 +112,8 @@ def test_shared_ledger_verdict_preserves_domain_error_contract() -> None:
         _validate_applied_migrations(
             migrations, {**valid, 1: (valid[1][0], "0" * 64)}
         )
-    with pytest.raises(MigrationDriftError, match="version 3 is newer"):
-        _validate_applied_migrations(migrations, {**valid, 3: ("future", "3" * 64)})
+    with pytest.raises(MigrationDriftError, match="version 4 is newer"):
+        _validate_applied_migrations(migrations, {**valid, 4: ("future", "4" * 64)})
 
 
 def test_prepare_observation_preserves_origin_and_produces_stable_record_hash() -> None:
@@ -127,11 +130,33 @@ def test_prepare_observation_preserves_origin_and_produces_stable_record_hash() 
 
 
 def test_prepare_observation_rejects_authority_classes() -> None:
+    """The vocabulary is closed, so an unlisted class is still refused.
+
+    `decision` was admitted by owner ruling on 2026-09-01; nothing else was. The
+    point of the original single-value rule was that this store must not silently
+    accumulate statements of desired state, and an open vocabulary would give that
+    back by accident.
+    """
     event = _event()
     event["record_class"] = "authority-command"
 
-    with pytest.raises(ValueError, match="record_class must be observation"):
+    with pytest.raises(ValueError, match="record_class must be one of"):
         prepare_observation(event)
+
+
+def test_prepare_observation_accepts_a_decision_record() -> None:
+    """A judgement is admissible, and stays distinguishable from an observation.
+
+    record_class is a column, not a fact buried in a payload, so a reader can still
+    separate what happened from what someone concluded about it -- which is the part
+    of the original constraint that had to survive relaxing it.
+    """
+    event = _event()
+    event["record_class"] = "decision"
+
+    prepared = prepare_observation(event)
+
+    assert prepared.record_class == "decision"
 
 
 def test_read_limit_is_deliberately_bounded() -> None:

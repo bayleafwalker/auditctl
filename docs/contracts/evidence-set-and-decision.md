@@ -59,24 +59,45 @@ effect.
 **`EvidenceSet`: yes, as an observation.** Evidence is observed, so it fits the
 store's existing `record_class: observation` without widening anything.
 
-**`Decision`: no, and the settlement commit was wrong to place it here.** The
-reason is in this repository's own code, not in a preference. `record_class` is
-hard-validated to the single value `observation`
-(`auditctl/validation.py:372`), and `AuditContext.as_record` states the rule it
-enforces: *"auditctl records conformance, it does not state desired state."* A
-`Decision` is a judgement about what should follow from evidence. It is the
-canonical example of desired state.
+**`Decision`: yes, by owner ruling of 2026-09-01.**
 
-Admitting `Decision` here would mean relaxing `record_class`, which is the one
-constraint keeping this store a record of what happened rather than a record of
-what someone concluded. That is an owner decision about the boundary, not a
-schema change, and it is deliberately not taken here.
+This section previously said no, and the reason was in this repository's own code:
+`record_class` was hard-validated to the single value `observation`, and
+`AuditContext.as_record` states the rule it enforced — *"auditctl records
+conformance, it does not state desired state."* A `Decision` is a judgement about
+what should follow from evidence, which is desired state by definition. Admitting
+it meant relaxing the one constraint keeping this store a record of what happened,
+so it was an owner decision about the boundary rather than a schema change.
 
-The consequence is small and specific: `Decision` needs a home that is allowed
-to hold judgements. Acceptance Lab already emits terminal decisions and already
-has the evaluator that produces them. Auditctl then holds the observation that
-a decision was recorded — an event about the judgement — without holding the
-judgement itself.
+The owner took it. `decision` is now admitted, and the settlement spine has one
+home: EvidenceSet as an observation, Decision as a judgement, in the same store.
+
+What survives the ruling is the *reason* the constraint existed. Mixing the two
+irreversibly was the failure the single value prevented; being unable to tell them
+apart is what would actually cost something. So:
+
+- The vocabulary stays **closed** (`observation`, `decision`). An unlisted class is
+  still refused, in both the local validator and central ingestion, and by a
+  database CHECK. An open column would give the failure back by accident.
+- `record_class` is a **queryable column**, not a payload field, so a reader can
+  separate what happened from what someone concluded about it.
+- It is part of each record's **immutable hash**. Two records identical but for
+  their class produce different digests, so the layer whose job is telling records
+  apart cannot conflate them. Observations hash to exactly what they always did,
+  so no existing digest changed.
+- Nothing infers the class. A caller recording a judgement passes `decision`
+  deliberately; guessing it from event type or payload shape would reintroduce the
+  ambiguity the closed vocabulary exists to prevent.
+
+Central migration 3 widens the CHECK. It finds the old constraint by catalog lookup
+rather than by its assumed default name: dropping a wrong name with `IF EXISTS`
+would leave the original single-value constraint in force while adding the widened
+one beside it, so decisions would still be rejected and the migration would report
+success. It raises instead. Every existing row is `observation` and satisfies the
+widened constraint, so no row is rewritten and no backfill is required.
+
+Acceptance Lab remains the natural *producer* of terminal decisions. This is where
+they are durably recorded, not where they are made.
 
 ## Why this is not deferral
 

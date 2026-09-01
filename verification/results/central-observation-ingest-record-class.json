@@ -1,0 +1,70 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "auditctl.central-observation-ingest",
+  "contract_ref": {
+    "doc_id": "auditctl-vuoro-served-audit-alignment",
+    "revision": "git:0751c6a77cacc5a2dd016705a5d2e9756a3216f2"
+  },
+  "implementation_sha": "sha256:central-implementation-v1:fbc434efa38ae461c1286c9036936bad98dc19fd0cbf742a855bbca92ac2d82e",
+  "depth": 2,
+  "environment": {
+    "backend": "disposable-local-postgresql",
+    "isolation": "PostgreSQL READ COMMITTED transactions with per-schema advisory migration locks, per-event advisory locks, and per-origin stream row locks",
+    "tool_versions": {
+      "postgresql": "18.6",
+      "python": "3.12.12",
+      "pytest": "9.1.1"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "kind": "verification-of-a-changed-implementation",
+    "suite": "tests/ under PostgreSQL realized from a /nix/store postgresql-18.6 path (nix daemon not used)",
+    "passed": 146,
+    "failed": 0,
+    "counterexamples_found": 0
+  },
+  "claims": [
+    {
+      "property": "a decision record is admitted by central ingestion, is stored with record_class 'decision', and remains distinguishable from an observation",
+      "result": "example-tested",
+      "evidence": [
+        "test_a_decision_is_ingested_and_stays_distinguishable_from_an_observation ingested one observation and one decision on the same origin stream and read back record_class values ['observation', 'decision'] ordered by origin_seq",
+        "two records identical in every field except record_class produced different record_sha256 values, so the class reaches the immutable identity rather than only the row",
+        "the widened CHECK accepted 'decision' and the closed vocabulary still rejected 'authority-command'"
+      ]
+    },
+    {
+      "property": "migration 3 upgrades an existing schema in place, is serialized per schema, and is idempotent on retry",
+      "result": "concurrency-tested",
+      "evidence": [
+        "test_empty_to_current_upgrade_backfills_receipts_and_is_idempotent applied versions (2, 3) to a version-1 schema and a repeat migration applied none",
+        "test_migrations_are_serialized_and_checksum_drift_fails_closed raced two migration connections from empty and observed applied_versions [(), (1, 2, 3)] - exactly one applier",
+        "the DO block located the record_class CHECK by catalog lookup rather than by assumed name, and raises rather than silently leaving the original constraint in force",
+        "no row was rewritten: every pre-existing row is 'observation' and satisfies the widened constraint"
+      ]
+    },
+    {
+      "property": "widening record_class does not disturb the existing central ingest contract",
+      "result": "concurrency-tested",
+      "evidence": [
+        "the complete suite passed 146 tests with zero skips, including all ten disposable-PostgreSQL integration tests",
+        "receipt identity, duplicate detection, origin-sequence gap rejection, role rotation and read bounds were re-run unchanged",
+        "compatibility reports installed 3, minimum 2, maximum 3, and a version-4 ledger row still fails closed as newer than this package"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "the first draft of migration 3 dropped the CHECK by its assumed default name ingest_observation_record_class_check with IF EXISTS. A wrong name would have left the original single-value constraint in force while adding the widened one beside it - decisions would still have been rejected and the migration would have reported success. Replaced with a catalog lookup that raises when no single-column CHECK on record_class is found. The name could not be confirmed against the deployed database, which is what made the assumption unsafe rather than merely untidy.",
+      "trace_ref": "auditctl/central_migrations/versions/0003_record_class.sql",
+      "seed": null
+    }
+  ],
+  "notes": [
+    "Commissioned by the owner ruling of 2026-09-01 admitting `decision` alongside `observation`, recorded in the portfolio disposition register (vuoro docs/direction/disposition-register.yaml) and in docs/contracts/evidence-set-and-decision.md.",
+    "A new packet exists rather than a restamp of item-1201 or item-2329 because central.py, central_schema.py and the migration set are all inside the digested implementation tree, and those two packets are observations about trees this change replaced. They remain true about the trees they were taken against.",
+    "CENTRAL_IMPLEMENTATION_PATHS gained versions/0003_record_class.sql. It previously listed only migrations 1 and 2, so a migration could have changed without invalidating the attestation.",
+    "PostgreSQL was realized directly from a /nix/store postgresql-18.6 path rather than through `nix shell`, the documented fallback in docs/operations/running-the-central-verification.md. Skip count was checked and is zero, per that page's warning that a missing fallback and a working one both print green."
+  ]
+}

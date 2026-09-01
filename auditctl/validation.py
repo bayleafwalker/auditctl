@@ -82,6 +82,23 @@ RESOLVED_CONTEXT_OPTIONAL_FIELDS = ("stream_class",)
 
 STREAM_CLASSES = ("live", "fixture")
 DEFAULT_STREAM_CLASS = "live"
+
+#: What kind of statement a record makes.
+#:
+#: This store was observation-only by design: `as_record` states the rule as
+#: "auditctl records conformance, it does not state desired state", and a single
+#: permitted value enforced it. `decision` is admitted by an explicit owner ruling
+#: (2026-09-01) making this the home of the settlement spine's Decision alongside
+#: EvidenceSet.
+#:
+#: The vocabulary stays CLOSED, and record_class stays a queryable column rather
+#: than a fact buried in a payload, because the reason for the original constraint
+#: survives the ruling: a reader must still be able to separate what happened from
+#: what someone concluded about it. Mixing the two irreversibly is the failure the
+#: single value was preventing; being unable to tell them apart is what would
+#: actually cost something.
+RECORD_CLASSES = ("observation", "decision")
+DEFAULT_RECORD_CLASS = "observation"
 ENVELOPE_FIELDS = {
     "event_id",
     "schema_version",
@@ -281,15 +298,26 @@ def with_observation_envelope(
     *,
     origin_stream_id: str,
     origin_seq: int,
+    record_class: str = DEFAULT_RECORD_CLASS,
 ) -> dict[str, Any]:
-    """Add the producer-outbox envelope without replacing auditctl's stable ID."""
+    """Add the producer-outbox envelope without replacing auditctl's stable ID.
+
+    `record_class` defaults to `observation`, so every existing producer keeps
+    writing exactly what it wrote before. A caller recording a judgement rather
+    than a conformance observation passes `decision` deliberately -- there is no
+    inference from event type or payload shape, because guessing which of the two
+    a record is would reintroduce the ambiguity the closed vocabulary exists to
+    prevent.
+    """
+    if record_class not in RECORD_CLASSES:
+        raise ValueError(f"record_class must be one of: {', '.join(RECORD_CLASSES)}")
     metadata = event["metadata"]
     payload = observation_payload(event)
     return {
         **event,
         "event_id": event["id"],
         "schema_version": 1,
-        "record_class": "observation",
+        "record_class": record_class,
         "origin_stream_id": origin_stream_id,
         "origin_seq": origin_seq,
         "event_type": event["type"],
@@ -368,8 +396,8 @@ def validate_event_object(event: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("occurred_at must match the audit timestamp")
         if event["schema_version"] != 1:
             raise ValueError("schema_version must be 1")
-        if event["record_class"] != "observation":
-            raise ValueError("record_class must be observation")
+        if event["record_class"] not in RECORD_CLASSES:
+            raise ValueError(f"record_class must be one of: {', '.join(RECORD_CLASSES)}")
         try:
             uuid.UUID(str(event["origin_stream_id"]))
         except (ValueError, AttributeError) as exc:

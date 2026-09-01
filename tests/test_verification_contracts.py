@@ -5,12 +5,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CENTRAL_CONTEXT_ID = "auditctl.central-observation-ingest"
+VUORO_ADAPTER_CONTEXT_ID = "auditctl.vuoro-audit-adapter"
 CENTRAL_IMPLEMENTATION_PATHS = (
     "auditctl.dispatch.json",
     "auditctl/central.py",
     "auditctl/central_migrations/__init__.py",
     "auditctl/central_migrations/versions/0001_ingest.sql",
     "auditctl/central_migrations/versions/0002_receipts_and_reads.sql",
+    "auditctl/central_migrations/versions/0003_record_class.sql",
     "auditctl/central_schema.py",
     "pyproject.toml",
 )
@@ -132,11 +134,16 @@ def test_vuoro_adapter_context_and_result_are_bound_to_the_owned_contract():
 
 
 def test_vuoro_adapter_result_digest_matches_the_owned_implementation_tree():
-    packet = json.loads(
-        (
-            ROOT / "verification/results/vuoro-audit-adapter-item-1202.json"
-        ).read_text(encoding="utf-8")
-    )
+    """Some packet must attest the shipped tree -- not one particular file.
+
+    This previously named `vuoro-audit-adapter-item-1202.json` directly, which forced
+    a restamp of that packet whenever the tree changed. A packet is an observation
+    carrying its own claims, counterexamples and measured counts; restamping makes
+    that narrative describe a tree it was never run against. The central test at the
+    top of this module already reasons this way, and this one now matches it: the
+    shipped tree must have been verified, and earlier observations stay true about
+    the trees they were taken against.
+    """
     digest = hashlib.sha256()
     assert VUORO_ADAPTER_IMPLEMENTATION_PATHS == tuple(
         sorted(VUORO_ADAPTER_IMPLEMENTATION_PATHS)
@@ -146,7 +153,29 @@ def test_vuoro_adapter_result_digest_matches_the_owned_implementation_tree():
         digest.update(b"\0")
         digest.update((ROOT / relative_path).read_bytes())
         digest.update(b"\0")
+    expected = f"sha256:vuoro-audit-adapter-v1:{digest.hexdigest()}"
 
-    assert packet["implementation_sha"] == (
-        f"sha256:vuoro-audit-adapter-v1:{digest.hexdigest()}"
+    packets = {
+        path.name: json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted((ROOT / "verification/results").glob("*.json"))
+    }
+    adapter = {
+        name: packet
+        for name, packet in packets.items()
+        if packet.get("context_id") == VUORO_ADAPTER_CONTEXT_ID
+    }
+    assert adapter, f"no verification result declares context {VUORO_ADAPTER_CONTEXT_ID}"
+
+    matching = [
+        name for name, packet in adapter.items() if packet["implementation_sha"] == expected
+    ]
+    assert matching, (
+        f"no result for {VUORO_ADAPTER_CONTEXT_ID} was observed against the owned tree.\n"
+        f"  owned: {expected}\n"
+        "  on record: "
+        + "\n             ".join(
+            f"{name}: {packet['implementation_sha']}" for name, packet in sorted(adapter.items())
+        )
+        + "\nRe-run the verification (docs/operations/running-the-central-verification.md) "
+        "and add a result naming what commissioned it. Do not edit an existing one."
     )

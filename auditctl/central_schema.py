@@ -17,9 +17,9 @@ from vuoro_schema_runtime import (
     validate_contiguous_migrations,
 )
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 MIN_RUNTIME_SCHEMA_VERSION = 2
-MAX_RUNTIME_SCHEMA_VERSION = 2
+MAX_RUNTIME_SCHEMA_VERSION = 3
 DOMAIN_API_VERSION = "audit/v1"
 MIGRATION_LOCK_NAMESPACE = "auditctl-central-schema"
 

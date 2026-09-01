@@ -133,6 +133,7 @@ def _event(
     origin_seq: int,
     number: int,
     summary: str | None = None,
+    record_class: str = "observation",
 ) -> dict[str, Any]:
     event_id = f"ad:{number:026d}"
     return with_observation_envelope(
@@ -148,6 +149,7 @@ def _event(
             "metadata": {"runtime_session_id": f"session-{number}"},
             "created_at": "2026-07-21T12:00:01Z",
         },
+        record_class=record_class,
         origin_stream_id=origin_stream_id,
         origin_seq=origin_seq,
     )
@@ -161,7 +163,7 @@ def _migrate_current(dsn: str, schema: str) -> None:
             migration_role=MIGRATION_ROLE,
             runtime_role=RUNTIME_ROLE,
         )
-    assert result.installed_version == 2
+    assert result.installed_version == 3
 
 
 class AdapterRejected(RuntimeError):
@@ -339,7 +341,7 @@ def test_empty_to_current_upgrade_backfills_receipts_and_is_idempotent(
             runtime_role=RUNTIME_ROLE,
         )
 
-    assert upgraded.applied_versions == (2,)
+    assert upgraded.applied_versions == (2, 3)
     assert repeated.applied_versions == ()
     with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
         current = check_compatibility(conn, schema=schema)
@@ -377,7 +379,7 @@ def test_migrations_are_serialized_and_checksum_drift_fails_closed(
     for thread in threads:
         thread.join(timeout=20)
     assert not failures
-    assert sorted(results, key=len) == [(), (1, 2)]
+    assert sorted(results, key=len) == [(), (1, 2, 3)]
 
     with _connect(postgres_dsn, MIGRATION_ROLE) as conn:
         with conn.cursor() as cur:
@@ -406,7 +408,7 @@ def test_compatibility_is_read_only_and_future_schemas_fail_closed(
         "domain_api_version": "audit/v1",
         "installed_schema_version": None,
         "minimum_schema_version": 2,
-        "maximum_schema_version": 2,
+        "maximum_schema_version": 3,
         "current_role": RUNTIME_ROLE,
         "expected_role_kind": "runtime",
         "configured_role": None,
@@ -420,8 +422,8 @@ def test_compatibility_is_read_only_and_future_schemas_fail_closed(
         with conn.cursor() as cur:
             cur.execute(
                 f'INSERT INTO "{future_schema}".schema_migration (version, name, sha256) '
-                "VALUES (3, 'future', %s)",
-                ("3" * 64,),
+                "VALUES (4, 'future', %s)",
+                ("4" * 64,),
             )
         with pytest.raises(MigrationDriftError, match="newer than this package"):
             migrate(
@@ -435,9 +437,9 @@ def test_compatibility_is_read_only_and_future_schemas_fail_closed(
     assert future.to_dict() == {
         "schema": future_schema,
         "domain_api_version": "audit/v1",
-        "installed_schema_version": 3,
+        "installed_schema_version": 4,
         "minimum_schema_version": 2,
-        "maximum_schema_version": 2,
+        "maximum_schema_version": 3,
         "current_role": RUNTIME_ROLE,
         "expected_role_kind": "runtime",
         "configured_role": None,
@@ -637,9 +639,9 @@ def test_role_contract_denies_runtime_ddl_and_migration_role_serving(
         assert compatibility.to_dict() == {
             "schema": schema,
             "domain_api_version": "audit/v1",
-            "installed_schema_version": 2,
+            "installed_schema_version": 3,
             "minimum_schema_version": 2,
-            "maximum_schema_version": 2,
+            "maximum_schema_version": 3,
             "current_role": RUNTIME_ROLE,
             "expected_role_kind": "runtime",
             "configured_role": RUNTIME_ROLE,
@@ -658,3 +660,53 @@ def test_role_contract_denies_runtime_ddl_and_migration_role_serving(
         assert compatibility.reasons == ("role_kind_mismatch",)
         with pytest.raises(SchemaCompatibilityError, match="role_kind_mismatch"):
             ingest_observation(conn, event, schema=schema)
+
+
+def test_a_decision_is_ingested_and_stays_distinguishable_from_an_observation(
+    postgres_dsn: str,
+) -> None:
+    """The settlement spine's judgement reaches the shared store, and stays labelled.
+
+    This store was observation-only, enforced by a single-value CHECK. An owner
+    ruling on 2026-09-01 admitted `decision` so the Decision object has a home
+    alongside EvidenceSet. What must not follow is the two becoming
+    indistinguishable once they share a table: a reader has to be able to separate
+    what happened from what someone concluded about it, which is why record_class is
+    a checked column and part of each record's immutable hash rather than a payload
+    field.
+    """
+    schema = _schema("audit_decision")
+    _migrate_current(postgres_dsn, schema)
+    stream_id = str(uuid4())
+    observation = _event(origin_stream_id=stream_id, origin_seq=1, number=40)
+    decision = _event(
+        origin_stream_id=stream_id,
+        origin_seq=2,
+        number=41,
+        record_class="decision",
+    )
+
+    with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
+        ingest_observation(conn, observation, schema=schema)
+        ingest_observation(conn, decision, schema=schema)
+        with conn.cursor() as cur:
+            cur.execute(
+                f'SELECT event_id, record_class FROM "{schema}".ingest_observation '
+                "ORDER BY origin_seq"
+            )
+            rows = cur.fetchall()
+
+    assert [row["record_class"] for row in rows] == ["observation", "decision"]
+
+    # The class reaches the immutable hash, so two records identical but for their
+    # class are distinguishable at the layer whose job is telling records apart.
+    same_but_observation = _event(
+        origin_stream_id=stream_id,
+        origin_seq=2,
+        number=41,
+        record_class="observation",
+    )
+    assert (
+        prepare_observation(decision).record_sha256
+        != prepare_observation(same_but_observation).record_sha256
+    )
