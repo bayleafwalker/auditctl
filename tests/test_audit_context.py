@@ -350,11 +350,15 @@ def test_the_record_is_complete_or_absent_never_partial(tmp_path: Path) -> None:
     record it" from "this write came from the repository itself", and that ambiguity is the
     defect the field exists to remove.
     """
-    from auditctl.validation import RESOLVED_CONTEXT_FIELDS, validate_resolved_context
+    from auditctl.validation import (
+        RESOLVED_CONTEXT_FIELDS,
+        RESOLVED_CONTEXT_OPTIONAL_FIELDS,
+        validate_resolved_context,
+    )
 
     repo = _repo(tmp_path, "alpha")
     record = resolve_audit_context(cwd=repo, env={}).as_record(repo)
-    assert set(record) == set(RESOLVED_CONTEXT_FIELDS)
+    assert set(record) == set(RESOLVED_CONTEXT_FIELDS) | set(RESOLVED_CONTEXT_OPTIONAL_FIELDS)
 
     validate_resolved_context({"resolved_context": record})
     validate_resolved_context({})  # absent is fine; historical events have none
@@ -385,3 +389,50 @@ def test_a_publisher_cannot_forge_or_suppress_the_record(tmp_path: Path) -> None
                 }
             }
         )
+
+
+def test_a_fixture_write_is_marked_and_a_historical_one_reads_as_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The split the store could not previously express.
+
+    Until `stream_class` existed, a fixture event and a real one were
+    byte-structurally identical, so the only thing separating them was the shape of
+    a session id somebody happened to choose. Nothing could query the difference,
+    which is why 91.9% of one corpus turned out to be fixtures nobody had counted.
+    """
+    from auditctl.validation import DEFAULT_STREAM_CLASS, validate_resolved_context
+
+    repo = _repo(tmp_path, "alpha")
+
+    monkeypatch.setenv("AUDITCTL_STREAM_CLASS", "fixture")
+    fixture_record = resolve_audit_context(cwd=repo, env={}).as_record(repo)
+    assert fixture_record["stream_class"] == "fixture"
+    validate_resolved_context({"resolved_context": fixture_record})
+
+    monkeypatch.delenv("AUDITCTL_STREAM_CLASS")
+    live_record = resolve_audit_context(cwd=repo, env={}).as_record(repo)
+    assert live_record["stream_class"] == DEFAULT_STREAM_CLASS
+
+    # A historical event carries the five-field form and no stream_class. It has to
+    # keep validating: making the sixth field required would reject every event
+    # already on disk, which is the trap the field was nearly added into.
+    historical = {k: v for k, v in live_record.items() if k != "stream_class"}
+    validate_resolved_context({"resolved_context": historical})
+
+
+def test_an_unrecognised_stream_class_is_refused_and_never_guessed(tmp_path: Path) -> None:
+    """A bad value fails loudly at validation, but an unset one resolves to live.
+
+    The two directions are not symmetric. Filing a real event as a fixture drops it
+    from every default query, so an unset or unrecognised environment resolves to
+    `live`; but a value that reached an event and is not a known class means
+    something upstream is wrong, and that must not be silently rewritten.
+    """
+    from auditctl.validation import validate_resolved_context
+
+    repo = _repo(tmp_path, "alpha")
+    record = resolve_audit_context(cwd=repo, env={}).as_record(repo)
+
+    with pytest.raises(ValueError, match="stream_class must be one of"):
+        validate_resolved_context({"resolved_context": {**record, "stream_class": "staging"}})

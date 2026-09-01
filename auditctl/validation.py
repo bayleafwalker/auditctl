@@ -66,6 +66,22 @@ RESOLVED_CONTEXT_FIELDS = (
     "published_from",
     "resolution_source",
 )
+
+#: Whether a write belongs to the real stream or to a test one.
+#:
+#: Optional, and for the same reason RESOLVED_CONTEXT_FIELDS is optional as a whole:
+#: events already carry the five-field form, so requiring a sixth would reject every
+#: one of them. Required-when-present is the wrong rule here -- absent means `live`,
+#: which is what every historical event was.
+#:
+#: A store that cannot tell its test data from its real data cannot make results
+#: reconstructible, and until this existed nothing could: fixture and real events were
+#: byte-structurally identical, so the only discriminator was the accidental shape of a
+#: session id. The resolver attaches this; a publisher cannot forge it through a payload.
+RESOLVED_CONTEXT_OPTIONAL_FIELDS = ("stream_class",)
+
+STREAM_CLASSES = ("live", "fixture")
+DEFAULT_STREAM_CLASS = "live"
 ENVELOPE_FIELDS = {
     "event_id",
     "schema_version",
@@ -305,12 +321,15 @@ def validate_resolved_context(event: dict[str, Any]) -> None:
     missing = sorted(set(RESOLVED_CONTEXT_FIELDS) - set(context))
     if missing:
         raise ValueError(f"incomplete resolved_context; missing: {', '.join(missing)}")
-    unknown = sorted(set(context) - set(RESOLVED_CONTEXT_FIELDS))
+    known = set(RESOLVED_CONTEXT_FIELDS) | set(RESOLVED_CONTEXT_OPTIONAL_FIELDS)
+    unknown = sorted(set(context) - known)
     if unknown:
         raise ValueError(f"unknown resolved_context field(s): {', '.join(unknown)}")
     for key in RESOLVED_CONTEXT_FIELDS:
         if not isinstance(context[key], str) or not context[key]:
             raise ValueError(f"resolved_context.{key} must be a non-empty string")
+    if "stream_class" in context and context["stream_class"] not in STREAM_CLASSES:
+        raise ValueError(f"resolved_context.stream_class must be one of: {', '.join(STREAM_CLASSES)}")
 
 
 def validate_event_object(event: dict[str, Any]) -> dict[str, Any]:

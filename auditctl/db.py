@@ -85,7 +85,18 @@ def _migration_3(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE audit_event ADD COLUMN resolved_context TEXT")
 
 
-_MIGRATIONS = [_migration_1, _migration_2, _migration_3]
+def _migration_4(conn: sqlite3.Connection) -> None:
+    """Make the live/fixture split reachable by query, not just present in the blob.
+
+    `stream_class` already rides inside `resolved_context`, but a field only the JSON
+    knows is a field no `WHERE` clause reaches -- the same reasoning as migration 3.
+    Historical rows are NULL, which reads as `live`: every event written before this
+    column existed was a real one, or was a fixture nobody could distinguish anyway.
+    """
+    conn.execute("ALTER TABLE audit_event ADD COLUMN stream_class TEXT")
+
+
+_MIGRATIONS = [_migration_1, _migration_2, _migration_3, _migration_4]
 
 _WAL_BUSY_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.04, 0.08)
 
@@ -142,8 +153,8 @@ def insert_event(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
             (id, ts, type, actor, summary, detail, refs, source, metadata, created_at,
              origin_stream_id, origin_seq, schema_version, record_class,
              runtime_session_id, basis_revision, correlation_id, causation_id,
-             payload_sha256, resolved_context)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             payload_sha256, resolved_context, stream_class)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event["id"],
@@ -166,6 +177,7 @@ def insert_event(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
             event.get("causation_id"),
             event.get("payload_sha256"),
             canonical_json(event["resolved_context"]) if event.get("resolved_context") else None,
+            (event.get("resolved_context") or {}).get("stream_class"),
         ),
     )
 
@@ -177,8 +189,8 @@ def insert_event_ignore(conn: sqlite3.Connection, event: dict[str, Any]) -> bool
             (id, ts, type, actor, summary, detail, refs, source, metadata, created_at,
              origin_stream_id, origin_seq, schema_version, record_class,
              runtime_session_id, basis_revision, correlation_id, causation_id,
-             payload_sha256, resolved_context)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             payload_sha256, resolved_context, stream_class)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO NOTHING
         """,
         (
@@ -202,6 +214,7 @@ def insert_event_ignore(conn: sqlite3.Connection, event: dict[str, Any]) -> bool
             event.get("causation_id"),
             event.get("payload_sha256"),
             canonical_json(event["resolved_context"]) if event.get("resolved_context") else None,
+            (event.get("resolved_context") or {}).get("stream_class"),
         ),
     )
     return cur.rowcount == 1

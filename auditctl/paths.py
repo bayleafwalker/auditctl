@@ -5,6 +5,21 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .validation import DEFAULT_STREAM_CLASS, STREAM_CLASSES
+
+
+def stream_class() -> str:
+    """Whether this process writes the real stream or a test one.
+
+    Read from the environment rather than taken from the caller, so that a test
+    harness sets it once for its own process and a publisher cannot declare itself
+    live or fixture through an event payload. An unset or unrecognised value is
+    `live`: the safe direction is to over-count real events, never to let a real
+    one be silently filed as a fixture and dropped from every default query.
+    """
+    value = os.environ.get("AUDITCTL_STREAM_CLASS", "").strip()
+    return value if value in STREAM_CLASSES else DEFAULT_STREAM_CLASS
+
 
 @dataclass(frozen=True)
 class AuditPaths:
@@ -63,6 +78,7 @@ class AuditContext:
             "artifacts_root": str(self.artifacts_root),
             "published_from": str(published_from),
             "resolution_source": self.resolution_source,
+            "stream_class": stream_class(),
         }
 
 
