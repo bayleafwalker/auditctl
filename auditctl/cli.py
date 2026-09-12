@@ -9,6 +9,11 @@ from pathlib import Path
 import click
 
 from . import db
+from .coverage import (
+    discover_stores,
+    measure_terminal_reasons,
+    render_terminal_reason_coverage,
+)
 from .ids import new_event_id
 from .ndjson import ImportInputError, append_event, read_events, resolve_inputs
 from .paths import resolve_audit_context, resolve_paths, shard_path
@@ -227,6 +232,81 @@ def render_cmd(since, until, type_, source, format_, limit) -> None:
         rendered = render_text(events)
         if rendered:
             click.echo(rendered)
+
+
+@cli.group("coverage")
+def coverage_group() -> None:
+    """Report how much of a declared vocabulary the evidence actually exercises."""
+
+
+@coverage_group.command("terminal-reason")
+@click.option(
+    "--root",
+    "roots",
+    multiple=True,
+    type=click.Path(path_type=Path),
+    help="Workspace or repository root to discover indexes and shards beneath (repeatable)",
+)
+@click.option(
+    "--index",
+    "indexes",
+    multiple=True,
+    type=click.Path(path_type=Path),
+    help="Explicit sqlite index to scan (repeatable)",
+)
+@click.option(
+    "--shards",
+    "shard_inputs",
+    multiple=True,
+    help="Explicit shard file, directory, or glob to scan (repeatable)",
+)
+@click.option("--json", "output_json", is_flag=True, default=False, help="Emit JSON")
+@click.option(
+    "--strict",
+    is_flag=True,
+    default=False,
+    help="Exit non-zero when a declared terminal reason has never been written",
+)
+def coverage_terminal_reason_cmd(roots, indexes, shard_inputs, output_json, strict) -> None:
+    """Count each declared terminal reason in the evidence, and name the unwritten ones.
+
+    Read-only by construction. It reports the gap; it never writes an event to close one,
+    because an observation the ledger manufactured about itself is not evidence.
+    """
+
+    index_paths = list(indexes)
+    shard_paths: list[Path] = []
+    for raw in shard_inputs:
+        try:
+            shard_paths.extend(resolve_inputs(raw))
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+    if roots:
+        discovered_indexes, discovered_shards = discover_stores(roots)
+        index_paths.extend(discovered_indexes)
+        shard_paths.extend(discovered_shards)
+    if not roots and not indexes and not shard_inputs:
+        # Default to the store this invocation would write to, resolved the one way the
+        # write path resolves it. Do not re-derive the root from parts here.
+        try:
+            context = resolve_audit_context()
+        except ValueError as exc:
+            raise click.ClickException(
+                f"{exc} Pass --root, --index, or --shards to scan stores explicitly."
+            ) from exc
+        if context.index_path.is_file():
+            index_paths.append(context.index_path)
+        shard_dir = context.artifacts_root / "_artifacts" / context.repo_id / "audit"
+        if shard_dir.is_dir():
+            shard_paths.extend(sorted(shard_dir.glob("events-*.ndjson")))
+
+    coverage = measure_terminal_reasons(indexes=index_paths, shards=shard_paths)
+    if output_json:
+        click.echo(json.dumps(coverage.as_record(), sort_keys=True))
+    else:
+        click.echo(render_terminal_reason_coverage(coverage))
+    if strict and coverage.unwritten:
+        raise SystemExit(1)
 
 
 def _index_only_message(index_only, *, shard_count: int, shard_events: int) -> str:
