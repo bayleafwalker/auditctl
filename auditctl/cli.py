@@ -9,6 +9,7 @@ from pathlib import Path
 import click
 
 from . import db
+from .evidence_falsifier import build_ledger_index, falsify, render_report
 from .ids import new_event_id
 from .ndjson import ImportInputError, append_event, read_events, resolve_inputs
 from .paths import resolve_audit_context, resolve_paths, shard_path
@@ -227,6 +228,87 @@ def render_cmd(since, until, type_, source, format_, limit) -> None:
         rendered = render_text(events)
         if rendered:
             click.echo(rendered)
+
+
+@cli.group("check")
+def check_group() -> None:
+    """Run a settled falsifier against a tree. Read-only; never repairs."""
+
+
+@check_group.command("evidence-ledger")
+@click.option(
+    "--root",
+    "roots",
+    multiple=True,
+    type=click.Path(path_type=Path),
+    help="Artifacts root to scan for evidence artifacts (repeatable)",
+)
+@click.option(
+    "--index",
+    "indexes",
+    multiple=True,
+    type=click.Path(path_type=Path),
+    help="Ledger sqlite index that citations must resolve against (repeatable)",
+)
+@click.option(
+    "--shards",
+    "shard_inputs",
+    multiple=True,
+    help="Ledger shard file, directory, or glob that citations may resolve against",
+)
+@click.option("--json", "output_json", is_flag=True, default=False, help="Emit JSON")
+@click.option(
+    "--report-only",
+    is_flag=True,
+    default=False,
+    help="Exit zero even when the falsifier fires (report the finding without gating)",
+)
+def check_evidence_ledger_cmd(roots, indexes, shard_inputs, output_json, report_only) -> None:
+    """Report every evidence artifact that no ledger id resolves to.
+
+    The falsifier settled on 2026-08-30: "an evidence artifact that no ledger id resolves
+    to, or a decision reachable only by reading a file in a working tree". It is expected
+    to fire against trees written before the convention existed. That is the finding; the
+    offending paths are listed so it can be acted on. Nothing is written or repaired.
+    """
+
+    if not roots:
+        try:
+            context = resolve_audit_context()
+        except ValueError as exc:
+            raise click.ClickException(f"{exc} Pass --root to scan a tree explicitly.") from exc
+        roots = (context.repo_root,)
+
+    index_paths = list(indexes)
+    shard_paths: list[Path] = []
+    for raw in shard_inputs:
+        try:
+            shard_paths.extend(resolve_inputs(raw))
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+    if not index_paths and not shard_paths:
+        # Default the ledger to the store this repository writes to, resolved the one way
+        # the write path resolves it rather than re-derived from parts here.
+        try:
+            context = resolve_audit_context()
+        except ValueError as exc:
+            raise click.ClickException(
+                f"{exc} Pass --index or --shards to name the ledger explicitly."
+            ) from exc
+        if context.index_path.is_file():
+            index_paths.append(context.index_path)
+        shard_dir = context.artifacts_root / "_artifacts" / context.repo_id / "audit"
+        if shard_dir.is_dir():
+            shard_paths.extend(sorted(shard_dir.glob("events-*.ndjson")))
+
+    ledger = build_ledger_index(indexes=index_paths, shards=shard_paths)
+    report = falsify(roots, ledger)
+    if output_json:
+        click.echo(json.dumps(report.as_record(), sort_keys=True))
+    else:
+        click.echo(render_report(report))
+    if report.falsified and not report_only:
+        raise SystemExit(1)
 
 
 def _index_only_message(index_only, *, shard_count: int, shard_events: int) -> str:

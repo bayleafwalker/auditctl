@@ -99,6 +99,17 @@ widened constraint, so no row is rewritten and no backfill is required.
 Acceptance Lab remains the natural *producer* of terminal decisions. This is where
 they are durably recorded, not where they are made.
 
+## The falsifier
+
+The owner's settlement bound this disposition to a falsifier: *"an evidence artifact
+that no ledger id resolves to, or a decision reachable only by reading a file in a
+working tree."* It is implemented as `auditctl check evidence-ledger` and specified in
+[`evidence-ledger-falsifier.md`](evidence-ledger-falsifier.md), which also records what
+it found on 2026-09-12: 46 of 46 evidence artifacts across the workspace cite no ledger
+id, and the ledger holds no `decision` record at all. Both limbs currently fire. The
+check reports and never repairs, because an id stamped into a file to silence it would
+resolve to nothing or to an event invented to make it resolve.
+
 ## Why this is not deferral
 
 The register's item asked for "an adapter or an explicit supersession". This is
