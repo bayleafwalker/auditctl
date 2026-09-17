@@ -112,12 +112,23 @@ def test_a_root_below_the_repository_is_the_defect_geometry_and_is_refused(tmp_p
         resolve_audit_context(cwd=workspace, env={"AUDITCTL_ARTIFACTS_ROOT": str(inner)})
 
 
-def test_an_index_beats_a_nearer_git_in_a_nested_repository(tmp_path: Path) -> None:
-    """The case that defeated the first repair.
+def test_a_nearer_git_beats_a_farther_index_in_a_nested_repository(tmp_path: Path) -> None:
+    """The case that defeated the first repair, corrected against the goal state.
 
-    A workspace holding the index contains repos that have a `.git` and no index of
-    their own. Stopping at the inner `.git` roots the shard in that repo while the
-    index stays at the workspace -- the same split, one directory down.
+    This repository used to resolve the other way: a workspace holding an index
+    unconditionally beat any repository nested beneath it that had not yet written a
+    local index of its own, regardless of distance. That is the 2026-08-29 geometry one
+    level up, and it reproduced for real against /projects/dev -- itself a git repository
+    with its own pooled index -- where a freshly created repository nested under it took
+    repo_id "dev" and its shard landed under the workspace, not itself. See agentops
+    REQ-026, the falsifier for `_artifacts/<repo>/...` being authoritative per repository
+    (docs/plans/2026-09-17-target-state.md TS-6).
+
+    A repository's own `.git` is always at least as close as an ancestor's index, so
+    nearest-wins means it can never be climbed past by accident. Deliberate pooling
+    (`test_a_pooled_root_above_the_repository_is_legitimate_and_accepted`) still works --
+    it opts in explicitly through `AUDITCTL_ARTIFACTS_ROOT` rather than through unscoped
+    proximity to someone else's index.
     """
     workspace = _repo(tmp_path, "workspace", index=True, git=False)
     inner = _repo(workspace, "inner-repo")
@@ -125,9 +136,9 @@ def test_an_index_beats_a_nearer_git_in_a_nested_repository(tmp_path: Path) -> N
 
     for cwd in (inner, inner / "sub"):
         context = resolve_audit_context(cwd=cwd, env={})
-        assert context.repo_root == workspace
-        assert context.repo_id == "workspace"
-        assert context.artifacts_root == workspace
+        assert context.repo_root == inner
+        assert context.repo_id == "inner-repo"
+        assert context.artifacts_root == inner
 
 
 def test_a_repo_with_no_index_falls_back_to_git_and_still_co_roots(tmp_path: Path) -> None:
