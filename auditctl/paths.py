@@ -196,22 +196,39 @@ def resolve_paths(cwd: Path | None = None, env: dict[str, str] | None = None) ->
             source="worktree-main",
         )
 
-    marker_root = _find_upward(start, lambda p: (p / ".auditctl" / "auditctl.db").exists())
-    if marker_root is not None:
+    # One walk, nearest ancestor wins -- whichever marker it carries.
+    #
+    # This used to be two walks: every ancestor was searched for `.auditctl/auditctl.db`
+    # before `.git` was even considered, so a *farther* index unconditionally beat a
+    # *nearer* repository boundary. That is the 2026-08-29 geometry one level up: a
+    # repository that has not yet written its own local index -- true of every repository
+    # before its first write -- resolved into whatever ancestor happened to hold one,
+    # under that ancestor's `repo_id`, with no explicit opt-in from either side. Measured
+    # against /projects/dev itself, which is a git repository with its own pooled index:
+    # a brand-new repo nested under it took repo_id "dev" and its shard landed in
+    # `/projects/dev/_artifacts/dev/`, not its own. REQ-026 in agentops is the falsifier.
+    #
+    # Nearest-wins closes that: a repository's own `.git` is always at least as close as
+    # any ancestor's index, so it can never be climbed past by accident. Deliberate pooling
+    # still works, but only through the two explicit mechanisms this module already has --
+    # `AUDITCTL_ARTIFACTS_ROOT` (checked below, ancestor-or-equal) and a committed
+    # `.auditctl-id` -- rather than through unscoped proximity to someone else's index.
+    found = _find_upward(
+        start, lambda p: (p / ".auditctl" / "auditctl.db").exists() or (p / ".git").exists()
+    )
+    if found is None:
+        raise ValueError("not inside an auditctl-enabled repo; set AUDITCTL_DB.")
+    if (found / ".auditctl" / "auditctl.db").exists():
         return AuditPaths(
-            repo_root=marker_root,
-            repo_id=_declared_repo_id(marker_root) or marker_root.name,
-            db_path=marker_root / ".auditctl" / "auditctl.db",
+            repo_root=found,
+            repo_id=_declared_repo_id(found) or found.name,
+            db_path=found / ".auditctl" / "auditctl.db",
             source="index-marker",
         )
-
-    git_root = _find_upward(start, lambda p: (p / ".git").exists())
-    if git_root is None:
-        raise ValueError("not inside an auditctl-enabled repo; set AUDITCTL_DB.")
     return AuditPaths(
-        repo_root=git_root,
-        repo_id=_declared_repo_id(git_root) or git_root.name,
-        db_path=git_root / ".auditctl" / "auditctl.db",
+        repo_root=found,
+        repo_id=_declared_repo_id(found) or found.name,
+        db_path=found / ".auditctl" / "auditctl.db",
         source="git-marker",
     )
 
