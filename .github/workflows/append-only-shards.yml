@@ -1,0 +1,33 @@
+name: Append-only shards
+
+# TS-6: committed auditctl shards are authoritative evidence until the S4
+# evidence-home import and must not be rewritten. Fails a PR that rewrites
+# rather than appends to a committed shard under _artifacts/**/audit/**.
+#
+# The checker is fetched from agentops (public), pinned to a specific commit,
+# rather than vendored, so a fix or tightening there does not have to be
+# copied into every repo that commits shards.
+
+on:
+  pull_request:
+
+jobs:
+  append-only-shards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout agentops at a pinned commit
+        uses: actions/checkout@v4
+        with:
+          repository: bayleafwalker/agentops
+          ref: 775e9c0fc35aa4d6d29f3a087a8b913acc09ffac
+          path: agentops-contracts
+
+      - name: check
+        run: |
+          python3 agentops-contracts/scripts/check_append_only_shards.py \
+            --base "origin/${{ github.event.pull_request.base.ref }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
