@@ -183,8 +183,9 @@ def test_oversized_event_is_rejected_without_a_sqlite_row(repo_root: Path) -> No
     )
 
     assert result.exit_code != 0
-    assert "immutableRef kind=artifact" in result.output
-    assert "_artifacts/<repo_id>/" in result.output
+    assert "canonical NDJSON limit" in result.output
+    assert "bound or truncate the payload" in result.output
+    assert "immutableRef kind=artifact" not in result.output
     conn = sqlite3.connect(repo_root / ".auditctl" / "auditctl.db")
     try:
         assert conn.execute("SELECT count(*) FROM audit_event").fetchone()[0] == 0

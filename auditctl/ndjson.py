@@ -11,8 +11,9 @@ from .validation import canonical_json, validate_event_object
 
 
 # Keep individual audit records small enough that the append-only recovery
-# shards remain practical to reconcile.  Large immutable payloads belong in an
-# artifact referenced by the event, not in the ledger line itself.
+# shards remain practical to reconcile.  The limit covers the whole canonical
+# line (envelope, summary, detail, refs and metadata).  There is no artifact
+# store to offload to, so publishers must bound their payload before sending.
 MAX_EVENT_LINE_BYTES = 16 * 1024
 
 
@@ -58,8 +59,8 @@ def append_event(path: Path, event: dict) -> None:
     if len(line) > MAX_EVENT_LINE_BYTES:
         raise ValueError(
             f"audit event exceeds the {MAX_EVENT_LINE_BYTES}-byte canonical NDJSON limit; "
-            "store bulk payloads as an immutableRef kind=artifact under "
-            "_artifacts/<repo_id>/ instead"
+            "bound or truncate the payload before publishing (the limit covers the "
+            "whole line: envelope, summary, detail, refs and metadata)"
         )
 
     path.parent.mkdir(parents=True, exist_ok=True)
