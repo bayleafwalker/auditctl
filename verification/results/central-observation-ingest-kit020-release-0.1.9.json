@@ -26,10 +26,10 @@
   },
   "claims": [
     {
-      "property": "The current central implementation and existing disposable PostgreSQL owner tests pass against audit0.1.9 candidate metadata with kit0.2.0",
+      "property": "The current central implementation and existing disposable PostgreSQL owner tests pass against audit 0.1.9 candidate metadata with kit 0.2.0",
       "result": "example-tested",
       "evidence": [
-        "2026-10-04: actual command uv run --frozen pytest -q -k \"not central_result_digest_matches_the_packaged_implementation_tree\" with PostgreSQL18.6 binaries on PATH:148 passed,1 deselected,0 skipped,0 failed; no prior packet rewritten",
+        "2026-10-04: actual command uv run --frozen pytest -q -k \"not central_result_digest_matches_the_packaged_implementation_tree\" with PostgreSQL 18.6 binaries on PATH: 148 passed, 1 deselected, 0 skipped, 0 failed; no prior packet rewritten",
         "The digest includes unchanged central source/migration/schema files plus the current version and immutable kit dependency in pyproject.toml; this compatibility change introduces no owner handler, migration or grant changes."
       ]
     }
@@ -38,9 +38,9 @@
   "notes": [
     "Commissioned as agentops#2603/#2604 published owner dependency compatibility prerequisite; not acceptance or resource-authority qualification.",
     "Earlier results remain observations of their original trees. This packet does not restate earlier instrumented history counts or infer new fault coverage beyond actual tests run.",
-    "Inherited published0.1.8 supports observation and decision record classes and schema range2..3. Decision storage needs schema3; this run creates disposable schema3 and does not migrate shared/live schema2 or claim live decision availability.",
-    "Source only authors candidate0.1.9 version/kit pin/release validation; canonical source after published0.1.8 also includes reviewed oversize-event error wording correction.",
-    "Initial run without PostgreSQL had138passed10skipped and one missing-current-result assertion failure; available realized server binaries allowed all central tests to execute.",
-    "After adding this new packet, the complete same disposable-PG suite passed149 tests with0skips/0failures. Repository-wide shared validator still rejects historical established-by-diff classifications; this new packet validates under current shared classification vocabulary without editing prior observations."
+    "Inherited published 0.1.8 supports observation and decision record classes and schema range 2..3. Decision storage needs schema 3; this run creates disposable schema 3 and does not migrate shared/live schema 2 or claim live decision availability.",
+    "Source only authors candidate 0.1.9 version/kit pin/release validation; canonical source after published 0.1.8 also includes reviewed oversize-event error wording correction.",
+    "Initial run without PostgreSQL had 138 passed, 10 skipped and one missing-current-result assertion failure; available realized server binaries allowed all central tests to execute.",
+    "After adding this new packet, the complete same disposable-PG suite passed 149 tests with 0 skips and 0 failures. Repository-wide shared validator still rejects historical established-by-diff classifications; this new packet validates under current shared classification vocabulary without editing prior observations."
   ]
 }
