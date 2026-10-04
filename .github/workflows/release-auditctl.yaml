@@ -23,6 +23,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
+      - name: Checkout the reviewed attribution query fixture
+        uses: actions/checkout@v4
+        with:
+          repository: bayleafwalker/agentops
+          ref: 7b5c02a14bee88e7c19ed81f4f510800c0160a8c
+          path: agentops-query
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -32,6 +38,8 @@ jobs:
       - name: Synchronize frozen development dependencies
         run: uv sync --frozen --extra dev
       - name: Run the full test suite
+        env:
+          AUDITCTL_TEST_ATTRIBUTION_QUERY: ${{ github.workspace }}/agentops-query/scripts/query_audit_attribution.py
         run: uv run pytest -q
 
   publish:
