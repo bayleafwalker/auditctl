@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ADAPTER_NAME = "vuoro-adapter-kit"
 SCHEMA_RUNTIME_NAME = "vuoro-schema-runtime"
 EXPECTED_SHARED_DIGESTS = {
-    ADAPTER_NAME: "0037898a4c9f01720a42302365b0172ecd203732070326ea2abdf549a44bf0c2",
+    ADAPTER_NAME: "4bdf13bd09c8ea0c889f5cfb479327885163413a64ed690a9ba1b8d82dfaa163",
     SCHEMA_RUNTIME_NAME: "b66c9357c99aa9e1a7353991ce54105a8621958ecfac47f8c121d80b90b77912",
 }
 DEPENDENCY_DIGEST_RE = re.compile(r"^sha256=(?P<digest>[0-9a-f]{64})$")

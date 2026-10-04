@@ -165,7 +165,7 @@ def test_distribution_metadata_declares_immutable_adapter_kit_pin() -> None:
     assert any(
         requirement.startswith(
             "vuoro-adapter-kit @ https://github.com/bayleafwalker/vuoro/releases/"
-            "download/vuoro-adapter-kit-v0.1.0/vuoro_adapter_kit-0.1.0-py3-none-any.whl"
+            "download/vuoro-adapter-kit-v0.2.0/vuoro_adapter_kit-0.2.0-py3-none-any.whl"
         )
         for requirement in requires
     )

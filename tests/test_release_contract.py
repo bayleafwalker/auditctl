@@ -23,7 +23,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "release-auditctl.yaml"
 
 
 def test_package_version_matches_release_version() -> None:
-    assert auditctl.__version__ == "0.1.8"
+    assert auditctl.__version__ == "0.1.9"
 
 
 def test_adapter_dependency_is_an_immutable_github_wheel_pin() -> None:
@@ -33,7 +33,7 @@ def test_adapter_dependency_is_an_immutable_github_wheel_pin() -> None:
 
     assert requirement.split("#", 1)[0] == lock_url
     assert digest == lock_digest
-    assert digest == "0037898a4c9f01720a42302365b0172ecd203732070326ea2abdf549a44bf0c2"
+    assert digest == "4bdf13bd09c8ea0c889f5cfb479327885163413a64ed690a9ba1b8d82dfaa163"
 
 
 def test_schema_runtime_dependency_is_an_immutable_github_wheel_pin() -> None:
@@ -88,10 +88,10 @@ def test_release_workflow_runs_tests_before_one_gated_build() -> None:
 
 
 @pytest.mark.skipif(
-    not list((ROOT / "dist").glob("auditctl-0.1.8-*.whl")),
+    not list((ROOT / "dist").glob("auditctl-0.1.9-*.whl")),
     reason="release wheel is built by the release workflow",
 )
 def test_built_wheel_satisfies_release_contract() -> None:
-    wheels = sorted((ROOT / "dist").glob("auditctl-0.1.8-*.whl"))
+    wheels = sorted((ROOT / "dist").glob("auditctl-0.1.9-*.whl"))
     assert len(wheels) == 1
     validate_wheel(wheels[0], tag=f"auditctl-v{wheels[0].name.split('-')[1]}")
