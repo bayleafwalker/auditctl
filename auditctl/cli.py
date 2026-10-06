@@ -163,8 +163,31 @@ def add_cmd(type_, actor, summary, detail, refs, source, metadata, ts, output_js
 @click.option("--until", default=None, help="Inclusive ISO UTC upper bound")
 @click.option("--limit", type=int, default=50, show_default=True)
 @click.option("--json", "output_json", is_flag=True, default=False)
-def list_cmd(type_, source, since, until, limit, output_json) -> None:
+@click.option("--attribution-overlay", type=click.Path(path_type=Path), multiple=True,
+              help="Explicit verified attribution overlay; repeat for protected tails")
+@click.option("--attribution-source", multiple=True, metavar="SOURCE_ID=PATH",
+              help="Explicit frozen source snapshot; repeat for verified copies")
+@click.option("--attributed-repo", default=None, help="Filter explicitly mapped repository in snapshot mode")
+def list_cmd(type_, source, since, until, limit, output_json, attribution_overlay,
+             attribution_source, attributed_repo) -> None:
     """List audit events newest first."""
+    if attribution_overlay or attribution_source or attributed_repo is not None:
+        from .attribution_listing import AttributionListingError, list_snapshots
+
+        try:
+            if not output_json:
+                raise AttributionListingError("snapshot attribution requires --json")
+            if since:
+                validate_timestamp(since)
+            if until:
+                validate_timestamp(until)
+            report = list_snapshots(attribution_overlay, attribution_source,
+                                    attributed_repo=attributed_repo, type_=type_, source=source,
+                                    since=since, until=until, limit=limit)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(json.dumps(report, sort_keys=True))
+        return
     try:
         if since:
             validate_timestamp(since)

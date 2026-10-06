@@ -17,3 +17,6 @@ dist/
 # the same rule agentops states for itself.
 /_artifacts/*
 !/_artifacts/auditctl/
+
+# Optional external verifier checkout used by consumer/release test fixtures.
+/agentops-query/
