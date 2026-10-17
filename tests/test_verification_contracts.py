@@ -110,17 +110,16 @@ def test_central_result_digest_matches_the_packaged_implementation_tree():
     )
 
 
-def test_vuoro_adapter_context_and_result_are_bound_to_the_owned_contract():
+def test_vuoro_adapter_has_a_result_bound_to_the_current_contract():
     context = json.loads(
         (ROOT / "verification/contexts/vuoro-audit-adapter.json").read_text(
             encoding="utf-8"
         )
     )
-    result = json.loads(
-        (
-            ROOT / "verification/results/vuoro-audit-adapter-item-1202.json"
-        ).read_text(encoding="utf-8")
-    )
+    results = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted((ROOT / "verification/results").glob("*.json"))
+    ]
     contract_digest = hashlib.sha256(
         (ROOT / "docs/contracts/central-observation-ingest.md").read_bytes()
     ).hexdigest()
@@ -128,9 +127,12 @@ def test_vuoro_adapter_context_and_result_are_bound_to_the_owned_contract():
     assert context["depth"] == 2
     assert "lost-submit-response" in context["faults"]
     assert context["bounds"]["catalog_operations"] == 5
-    assert result["context_id"] == context["id"]
-    assert context["contract_ref"] == result["contract_ref"]
     assert context["contract_ref"]["revision"] == f"sha256:{contract_digest}"
+    assert any(
+        result.get("context_id") == context["id"]
+        and result.get("contract_ref") == context["contract_ref"]
+        for result in results
+    ), "no measured verification result is bound to the current contract revision"
 
 
 def test_vuoro_adapter_result_digest_matches_the_owned_implementation_tree():

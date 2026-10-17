@@ -5,7 +5,7 @@
   "subject": "vuoro-audit-observation-and-receipt-adapter",
   "contract_ref": {
     "doc_id": "auditctl-central-observation-ingest",
-    "revision": "sha256:df9ca3fadd6b9b5d314338126dc5b06db2873bca15851bcbcaa933a5489e7173"
+    "revision": "sha256:13a9ca73b4525352f3a49ac7fda9f3cebab3c93209cf1f4c59b8eae94911157a"
   },
   "source_of_truth": "local-ndjson-producer-record-and-postgresql-central-observation-ledger",
   "depth": 2,

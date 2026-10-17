@@ -1,0 +1,53 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "auditctl.vuoro-audit-adapter",
+  "contract_ref": {
+    "doc_id": "auditctl-central-observation-ingest",
+    "revision": "sha256:13a9ca73b4525352f3a49ac7fda9f3cebab3c93209cf1f4c59b8eae94911157a"
+  },
+  "implementation_sha": "sha256:vuoro-audit-adapter-v1:d32bc0ea4dd009b7b1751d5d1c58216d16a542aa3c8b3c02f76d030e67591896",
+  "depth": 1,
+  "environment": {
+    "backend": "local tests with disposable PostgreSQL integration fixture",
+    "isolation": "temporary PostgreSQL cluster, schemas, repositories, and files created and removed by test fixtures",
+    "tool_versions": {
+      "postgresql": "16.15",
+      "python": "3.12.14",
+      "pytest": "9.1.1"
+    }
+  },
+  "execution": {
+    "command": "AUDITCTL_TEST_ATTRIBUTION_QUERY=/workspace/agentops/scripts/query_audit_attribution.py PATH=/workspace/tools/postgres16/bin:$PATH uv run --frozen --extra dev pytest -q -rs",
+    "postgresql_integration_tests": 10,
+    "postgresql_integration_tests_passed": 10,
+    "source_preflight_tests": 7,
+    "suite_passed": 193,
+    "suite_skipped": 1,
+    "suite_result": "passed",
+    "skip_reason": "tests/test_release_contract.py:90 — release wheel is built by the release workflow"
+  },
+  "claims": [
+    {
+      "property": "the contract clarification distinguishes historical decision records from current work settlement and states that the source contract is not a deployment observation",
+      "result": "documented-only",
+      "evidence": [
+        "The central-observation-ingest contract now names the schema-3 source vocabulary observation/decision and preserves the rule that ingestion does not grant settlement authority.",
+        "The contract explicitly records that historical import, real-inventory reconciliation, and cutover remain separate open gates."
+      ]
+    },
+    {
+      "property": "the existing Auditctl central admission and adapter integration suite remains valid against the amended source contract",
+      "result": "property-tested",
+      "evidence": [
+        "All ten disposable PostgreSQL integration tests passed against PostgreSQL 16.15.",
+        "The exercised tests cover admission, duplicate and gap handling, lost-response retry, schema compatibility, and role constraints."
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "This result follows the 2026-10-17 source documentation reconciliation; it does not replace or edit earlier observations, whose context is archived at verification/contexts/archive/vuoro-audit-adapter-2026-10-17-pre-contract-reconciliation.json.",
+    "No hosted deployment, source import, authority migration, or cutover was performed or inferred.",
+    "The source contract update does not qualify a live deployment, source import, authority migration, or cutover."
+  ]
+}
