@@ -20,8 +20,8 @@
     "command": "AUDITCTL_TEST_ATTRIBUTION_QUERY=/workspace/agentops/scripts/query_audit_attribution.py PATH=/workspace/tools/postgres16/bin:$PATH uv run --frozen --extra dev pytest -q -rs",
     "postgresql_integration_tests": 10,
     "postgresql_integration_tests_passed": 10,
-    "source_preflight_tests": 7,
-    "suite_passed": 193,
+    "source_preflight_tests": 8,
+    "suite_passed": 194,
     "suite_skipped": 1,
     "suite_result": "passed",
     "skip_reason": "tests/test_release_contract.py:90 — release wheel is built by the release workflow"

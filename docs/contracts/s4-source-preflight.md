@@ -27,7 +27,8 @@ The exact manifest object is:
       "path": "events-2026-10-01.ndjson",
       "byte_count": 12345,
       "line_count": 27,
-      "sha256": "<lowercase SHA-256 of exact file bytes>"
+      "sha256": "<lowercase SHA-256 of exact file bytes>",
+      "record_digest_domain": "unknown"
     }
   ]
 }
@@ -39,9 +40,14 @@ digest, each whole-file byte count and digest, final newline, and exact line
 count before parsing. Reports include source ids, scope, counts and digests,
 not local paths or event payloads. Files and manifests are bounded to 512 MiB
 and 4 MiB respectively.
+Both manifest and source are opened with no-follow and nonblocking flags and
+checked as regular files before reading, so a symlink or FIFO is refused.
 The `scope` value is a manifest assertion; this command does not verify Git
 blob/commit provenance or whether a tail is protected. Use the Agentops overlay
 verifier for those checks before treating the inventory as reviewed.
+`record_digest_domain` is optional and defaults to `unknown`; the only supported
+declared domain is `auditctl-central-v1`. The field is frozen by the manifest
+digest and applies to source `record_sha256` values in that file.
 
 Each line is parsed as strict UTF-8 JSON with duplicate object keys and
 non-finite numbers refused. `validate_event_object` checks the original
@@ -51,9 +57,13 @@ id, line number, byte offset and raw-line SHA-256. It distinguishes an absent
 source `payload_sha256` or `record_sha256` from a derived digest. For complete
 envelopes, `prepare_observation` validates the payload digest and supplies a
 separately named `auditctl-central-v1` record digest. A supplied source
-`record_sha256` is compared only in that domain; for a legacy row its domain
-is unknown and the report does not relabel or validate it. The import
-fingerprint has its own explicit domain and never replaces an authored digest.
+`record_sha256` is compared only when the manifest explicitly declares that
+domain and the event has a verifiable envelope. Otherwise the original
+lowercase hash is preserved with `unknown-domain` or `unverifiable-domain`
+status. A mismatch in the explicitly declared `auditctl-central-v1` domain
+fails preflight. Missing, unknown, and unverifiable original digest counts make
+`record_digest_qualification` partial. The import fingerprint has its own
+explicit domain and never replaces an authored digest.
 
 Repeated stable event ids are counted as exact duplicate copies only when the
 raw line bytes and source repository identity match. Different bytes or repo

@@ -9,8 +9,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
+import stat
 from typing import Any
 
 from .central import prepare_observation
@@ -59,8 +61,15 @@ def _finite_float(value: str) -> float:
     return number
 
 
-def _exact_fields(value: Any, fields: set[str], label: str) -> dict[str, Any]:
-    if type(value) is not dict or value.keys() != fields:
+def _exact_fields(
+    value: Any, fields: set[str], label: str, optional: set[str] | None = None
+) -> dict[str, Any]:
+    optional = optional or set()
+    if (
+        type(value) is not dict
+        or not fields <= value.keys()
+        or value.keys() - fields - optional
+    ):
         raise SourcePreflightError(f"invalid {label} fields")
     return value
 
@@ -75,6 +84,37 @@ def _positive(value: Any, label: str) -> int:
     if type(value) is not int or value < 1:
         raise SourcePreflightError(f"{label} must be a positive integer")
     return value
+
+
+def _read_regular_file(path: Path, limit: int, *, expected_size: int | None = None) -> bytes:
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+        raise SourcePreflightError("platform lacks safe no-follow/nonblocking file opens")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, flags)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise SourcePreflightError("input path must name a regular file")
+        if metadata.st_size > limit:
+            raise SourcePreflightError("input file exceeds its byte bound")
+        if expected_size is not None and metadata.st_size != expected_size:
+            raise SourcePreflightError("frozen source changed: byte count differs")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = None
+            raw = stream.read(limit + 1)
+        if len(raw) > limit:
+            raise SourcePreflightError("input file exceeds its byte bound")
+        if expected_size is not None and len(raw) != expected_size:
+            raise SourcePreflightError("frozen source changed: byte count differs")
+        return raw
+    except SourcePreflightError:
+        raise
+    except OSError as error:
+        raise SourcePreflightError("input file is unavailable or is not a safe regular file") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _load_manifest(raw: bytes, expected_sha256: str) -> tuple[dict[str, Any], str]:
@@ -99,6 +139,7 @@ def _load_manifest(raw: bytes, expected_sha256: str) -> tuple[dict[str, Any], st
             source,
             {"source_id", "source_repo_id", "scope", "path", "byte_count", "line_count", "sha256"},
             "source descriptor",
+            {"record_digest_domain"},
         )
         source_id = _nonempty(source["source_id"], "source_id")
         if source_id in seen:
@@ -112,6 +153,10 @@ def _load_manifest(raw: bytes, expected_sha256: str) -> tuple[dict[str, Any], st
         _positive(source["line_count"], "source line_count")
         if type(source["sha256"]) is not str or not _HEX.fullmatch(source["sha256"]):
             raise SourcePreflightError("source sha256 must be lowercase hex")
+        domain = source.get("record_digest_domain", "unknown")
+        if type(domain) is not str or domain not in {"unknown", "auditctl-central-v1"}:
+            raise SourcePreflightError("unsupported source record digest domain")
+        source["record_digest_domain"] = domain
     if total_bytes > _MAX_SOURCE_BYTES:
         raise SourcePreflightError("source set exceeds the 512 MiB bound")
     return manifest, actual
@@ -121,14 +166,8 @@ def _read_frozen_source(source: dict[str, Any], manifest_path: Path) -> bytes:
     path = Path(source["path"])
     if not path.is_absolute():
         path = manifest_path.parent / path
-    try:
-        if path.is_symlink() or not path.is_file():
-            raise SourcePreflightError("source path must name an explicit regular file")
-        with path.open("rb") as stream:
-            raw = stream.read(source["byte_count"] + 1)
-    except OSError as error:
-        raise SourcePreflightError("frozen source file is unavailable") from error
-    if len(raw) != source["byte_count"] or hashlib.sha256(raw).hexdigest() != source["sha256"]:
+    raw = _read_regular_file(path, _MAX_SOURCE_BYTES, expected_size=source["byte_count"])
+    if hashlib.sha256(raw).hexdigest() != source["sha256"]:
         raise SourcePreflightError(f"frozen source changed: {source['source_id']}")
     if not raw.endswith(b"\n"):
         raise SourcePreflightError(f"frozen source lacks final newline: {source['source_id']}")
@@ -140,11 +179,7 @@ def _read_frozen_source(source: dict[str, Any], manifest_path: Path) -> bytes:
 
 def preflight(manifest_path: Path, expected_manifest_sha256: str) -> dict[str, Any]:
     """Verify explicitly bound source bytes and return a redacted comparison report."""
-    try:
-        with manifest_path.open("rb") as stream:
-            manifest_raw = stream.read(_MAX_MANIFEST_BYTES + 1)
-    except OSError as error:
-        raise SourcePreflightError("source manifest is unavailable") from error
+    manifest_raw = _read_regular_file(manifest_path, _MAX_MANIFEST_BYTES)
     manifest, manifest_sha256 = _load_manifest(manifest_raw, expected_manifest_sha256)
 
     events_by_id: dict[str, dict[str, Any]] = {}
@@ -153,6 +188,10 @@ def preflight(manifest_path: Path, expected_manifest_sha256: str) -> dict[str, A
     locations: list[dict[str, Any]] = []
     duplicate_copies = 0
     total_lines = 0
+    verified_record_digest_count = 0
+    unknown_record_digest_count = 0
+    absent_record_digest_count = 0
+    unverifiable_record_digest_count = 0
     for source in manifest["sources"]:
         source_raw = _read_frozen_source(source, manifest_path)
         byte_offset = 0
@@ -190,19 +229,34 @@ def preflight(manifest_path: Path, expected_manifest_sha256: str) -> dict[str, A
                     supplied_record_digest = event["record_sha256"]
                     if type(supplied_record_digest) is not str or not _HEX.fullmatch(supplied_record_digest):
                         raise SourcePreflightError("record_sha256 has an unsupported shape")
-                    if supplied_record_digest != prepared.record_sha256:
-                        raise SourcePreflightError("record_sha256 differs from Auditctl central-v1 digest")
-                    source_record = {"status": "present", "domain": "auditctl-central-v1", "sha256": supplied_record_digest}
+                    if source["record_digest_domain"] == "auditctl-central-v1":
+                        if supplied_record_digest != prepared.record_sha256:
+                            raise SourcePreflightError("record_sha256 differs from Auditctl central-v1 digest")
+                        source_record = {"status": "verified", "domain": "auditctl-central-v1", "sha256": supplied_record_digest}
+                        verified_record_digest_count += 1
+                    else:
+                        source_record = {"status": "unknown-domain", "domain": "unknown", "sha256": supplied_record_digest}
+                        unknown_record_digest_count += 1
                 else:
-                    source_record = {"status": "absent", "domain": None, "sha256": None}
+                    source_record = {"status": "absent", "domain": source["record_digest_domain"], "sha256": None}
+                    absent_record_digest_count += 1
                 derived_record_digest = prepared.record_sha256
                 payload_digest = {"status": "present", "sha256": prepared.payload_sha256}
                 record_class = prepared.record_class
             else:
                 if "record_sha256" in event:
-                    source_record = {"status": "unknown-domain", "domain": None, "sha256": None}
+                    supplied_record_digest = event["record_sha256"]
+                    if type(supplied_record_digest) is not str or not _HEX.fullmatch(supplied_record_digest):
+                        raise SourcePreflightError("record_sha256 has an unsupported shape")
+                    if source["record_digest_domain"] == "auditctl-central-v1":
+                        source_record = {"status": "unverifiable-domain", "domain": "auditctl-central-v1", "sha256": supplied_record_digest}
+                        unverifiable_record_digest_count += 1
+                    else:
+                        source_record = {"status": "unknown-domain", "domain": "unknown", "sha256": supplied_record_digest}
+                        unknown_record_digest_count += 1
                 else:
-                    source_record = {"status": "absent", "domain": None, "sha256": None}
+                    source_record = {"status": "absent", "domain": source["record_digest_domain"], "sha256": None}
+                    absent_record_digest_count += 1
                 derived_record_digest = None
                 payload_digest = {"status": "absent", "sha256": None}
                 record_class = None
@@ -260,12 +314,17 @@ def preflight(manifest_path: Path, expected_manifest_sha256: str) -> dict[str, A
         "manifest_sha256": manifest_sha256,
         "source_count": len(manifest["sources"]),
         "source_bindings": [
-            {key: source[key] for key in ("source_id", "source_repo_id", "scope", "byte_count", "line_count", "sha256")}
+            {key: source[key] for key in ("source_id", "source_repo_id", "scope", "byte_count", "line_count", "sha256", "record_digest_domain")}
             for source in manifest["sources"]
         ],
         "line_count": total_lines,
         "distinct_event_count": len(events_by_id),
         "exact_duplicate_copies": duplicate_copies,
+        "record_digest_qualification": "complete" if not (unknown_record_digest_count or absent_record_digest_count or unverifiable_record_digest_count) else "partial",
+        "verified_record_digest_count": verified_record_digest_count,
+        "unknown_record_digest_count": unknown_record_digest_count,
+        "absent_record_digest_count": absent_record_digest_count,
+        "unverifiable_record_digest_count": unverifiable_record_digest_count,
         "records": locations,
         "producer_stream_count": len(sequences),
         "idempotency_key_count": len(idempotency_keys),

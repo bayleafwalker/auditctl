@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -38,7 +39,12 @@ def _enveloped(event_id: str, seq: int, record_class: str = "observation") -> di
     )
 
 
-def _write_manifest(tmp_path: Path, sources: list[tuple[str, list[dict]]]) -> tuple[Path, str]:
+def _write_manifest(
+    tmp_path: Path,
+    sources: list[tuple[str, list[dict]]],
+    *,
+    record_digest_domains: dict[str, str] | None = None,
+) -> tuple[Path, str]:
     descriptors = []
     for index, (source_id, events) in enumerate(sources):
         raw = b"".join(
@@ -56,6 +62,8 @@ def _write_manifest(tmp_path: Path, sources: list[tuple[str, list[dict]]]) -> tu
             "line_count": len(events),
             "sha256": hashlib.sha256(raw).hexdigest(),
         })
+        if record_digest_domains and source_id in record_digest_domains:
+            descriptors[-1]["record_digest_domain"] = record_digest_domains[source_id]
     manifest = {"schema_version": "auditctl-source-snapshot-manifest/v1", "sources": descriptors}
     manifest_raw = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
     manifest_path = tmp_path / "frozen-manifest.json"
@@ -92,22 +100,48 @@ def test_preflight_labels_only_the_owner_central_digest_domain(tmp_path: Path) -
     event = _enveloped("ad:00000000000000000000000001", 1)
     event["record_sha256"] = prepare_observation(event).record_sha256
     legacy = _legacy("ad:00000000000000000000000002")
-    legacy["record_sha256"] = "legacy-domain-value"
-    path, digest = _write_manifest(tmp_path, [("source-a", [event, legacy])])
+    legacy["record_sha256"] = "e" * 64
+    path, digest = _write_manifest(
+        tmp_path,
+        [("source-a", [event, legacy])],
+        record_digest_domains={"source-a": "auditctl-central-v1"},
+    )
 
     result = preflight(path, digest)
     records = {record["event_id"]: record for record in result["records"]}
     assert records[event["id"]]["source_record_sha256"] == {
-        "status": "present", "domain": "auditctl-central-v1", "sha256": event["record_sha256"]
+        "status": "verified", "domain": "auditctl-central-v1", "sha256": event["record_sha256"]
     }
     assert records[legacy["id"]]["source_record_sha256"] == {
-        "status": "unknown-domain", "domain": None, "sha256": None
+        "status": "unverifiable-domain", "domain": "auditctl-central-v1", "sha256": "e" * 64
     }
+    assert result["record_digest_qualification"] == "partial"
+    assert result["unverifiable_record_digest_count"] == 1
 
     event["record_sha256"] = "f" * 64
-    path, digest = _write_manifest(tmp_path, [("source-a", [event])])
+    path, digest = _write_manifest(
+        tmp_path,
+        [("source-a", [event])],
+        record_digest_domains={"source-a": "auditctl-central-v1"},
+    )
     with pytest.raises(SourcePreflightError, match="differs from Auditctl central-v1 digest"):
         preflight(path, digest)
+
+    producer_digest = hashlib.sha256(b"producer-specific-record-digest-domain").hexdigest()
+    event["record_sha256"] = producer_digest
+    legacy = _legacy("ad:00000000000000000000000002")
+    legacy_digest = hashlib.sha256(b"legacy-record-digest-domain").hexdigest()
+    legacy["record_sha256"] = legacy_digest
+    path, digest = _write_manifest(tmp_path, [("source-a", [event, legacy])])
+    result = preflight(path, digest)
+    unknown_records = {record["event_id"]: record for record in result["records"]}
+    assert unknown_records[event["id"]]["source_record_sha256"] == {
+        "status": "unknown-domain", "domain": "unknown", "sha256": producer_digest
+    }
+    assert unknown_records[legacy["id"]]["source_record_sha256"] == {
+        "status": "unknown-domain", "domain": "unknown", "sha256": legacy_digest
+    }
+    assert result["unknown_record_digest_count"] == 2
 
 
 def test_preflight_counts_exact_copies_separately_and_rejects_changed_identity(tmp_path: Path) -> None:
@@ -196,3 +230,43 @@ def test_preflight_rejects_malformed_envelope_and_duplicate_json_keys(tmp_path: 
     manifest_path.write_bytes(raw_manifest)
     with pytest.raises(SourcePreflightError, match="duplicate JSON object key"):
         preflight(manifest_path, hashlib.sha256(raw_manifest).hexdigest())
+
+
+def test_preflight_refuses_fifo_manifest_and_source_without_blocking(tmp_path: Path) -> None:
+    event = _legacy("ad:00000000000000000000000001")
+    source_raw = json.dumps(event, separators=(",", ":")).encode() + b"\n"
+    fifo_source = tmp_path / "source.fifo"
+    os.mkfifo(fifo_source)
+    manifest = {
+        "schema_version": "auditctl-source-snapshot-manifest/v1",
+        "sources": [{"source_id": "source-a", "source_repo_id": "audit-fixture", "scope": "committed-shard",
+                     "path": fifo_source.name, "byte_count": len(source_raw), "line_count": 1,
+                     "sha256": hashlib.sha256(source_raw).hexdigest()}],
+    }
+    manifest_raw = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(manifest_raw)
+    manifest_digest = hashlib.sha256(manifest_raw).hexdigest()
+    with pytest.raises(SourcePreflightError, match="regular file"):
+        preflight(manifest_path, manifest_digest)
+
+    manifest_path.unlink()
+    os.mkfifo(manifest_path)
+    with pytest.raises(SourcePreflightError, match="regular file"):
+        preflight(manifest_path, manifest_digest)
+
+    manifest_path.unlink()
+    regular_source = tmp_path / "regular-source.ndjson"
+    regular_source.write_bytes(source_raw)
+    symlink_source = tmp_path / "symlink-source.ndjson"
+    symlink_source.symlink_to(regular_source)
+    manifest = {
+        "schema_version": "auditctl-source-snapshot-manifest/v1",
+        "sources": [{"source_id": "source-b", "source_repo_id": "audit-fixture", "scope": "committed-shard",
+                     "path": symlink_source.name, "byte_count": len(source_raw), "line_count": 1,
+                     "sha256": hashlib.sha256(source_raw).hexdigest()}],
+    }
+    manifest_raw = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    manifest_path.write_bytes(manifest_raw)
+    with pytest.raises(SourcePreflightError, match="safe regular file"):
+        preflight(manifest_path, hashlib.sha256(manifest_raw).hexdigest())
