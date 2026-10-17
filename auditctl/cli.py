@@ -53,6 +53,30 @@ def cli() -> None:
     """Repo-local audit ledger."""
 
 
+@cli.command("source-preflight")
+@click.option(
+    "--manifest",
+    "manifest_path",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    required=True,
+    help="Explicit frozen source manifest",
+)
+@click.option(
+    "--manifest-sha256",
+    required=True,
+    help="Externally recorded lowercase SHA-256 of the exact manifest bytes",
+)
+def source_preflight_cmd(manifest_path: Path, manifest_sha256: str) -> None:
+    """Qualify an explicitly frozen source snapshot without opening the ledger database."""
+    from .source_preflight import preflight
+
+    try:
+        report = preflight(manifest_path, manifest_sha256)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(report, sort_keys=True, ensure_ascii=False, allow_nan=False))
+
+
 @cli.command("add")
 @click.option("--type", "type_", required=True, help="Audit event type")
 @click.option("--actor", required=True, help="Actor responsible for the event")

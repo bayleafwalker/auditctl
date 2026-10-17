@@ -1,0 +1,78 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "auditctl.vuoro-audit-adapter",
+  "owner_repo": "auditctl",
+  "subject": "vuoro-audit-observation-and-receipt-adapter",
+  "contract_ref": {
+    "doc_id": "auditctl-central-observation-ingest",
+    "revision": "sha256:df9ca3fadd6b9b5d314338126dc5b06db2873bca15851bcbcaa933a5489e7173"
+  },
+  "source_of_truth": "local-ndjson-producer-record-and-postgresql-central-observation-ledger",
+  "depth": 2,
+  "backends": ["ndjson", "postgresql", "sqlite"],
+  "actors": ["local-publisher", "vuoro-service-instance-a", "vuoro-service-instance-b"],
+  "initial_state": [
+    "one observation is durable in local SQLite and NDJSON while the central service is unavailable",
+    "the central audit schema is current and empty before delayed submission"
+  ],
+  "operations": [
+    {"name": "local-append", "actors": ["local-publisher"], "synchronization": "sqlite-transaction-plus-locked-ndjson-fsync"},
+    {"name": "audit.observation.submit", "actors": ["vuoro-service-instance-a", "vuoro-service-instance-b"], "synchronization": "stable-origin-tuple-and-central-admission-locks"},
+    {"name": "audit.receipt.lookup", "actors": ["vuoro-service-instance-b"], "synchronization": "after-unobserved-submit-response"},
+    {"name": "audit.observation.list", "actors": ["vuoro-service-instance-b"], "synchronization": "after-server-ingest-offset"},
+    {"name": "audit.stream.status", "actors": ["vuoro-service-instance-b"], "synchronization": "after-gap-rejection"},
+    {"name": "local-rebuild", "actors": ["local-publisher"], "synchronization": "independent-of-central-service-state"}
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one-local-producer-record-and-one-stable-central-receipt"
+  },
+  "assumptions": {
+    "isolation": "PostgreSQL READ COMMITTED plus auditctl event advisory and origin-stream row locks",
+    "clock": "database receipt clock; producer timestamps remain part of the immutable record",
+    "fairness": "none"
+  },
+  "bounds": {
+    "local_observations": 1,
+    "service_instances": 2,
+    "submission_attempts": 2,
+    "missing_sequence_attempts": 1,
+    "catalog_operations": 5,
+    "read_limit": 100
+  },
+  "invariants": [
+    "local-append-and-rebuild-do-not-depend-on-central-service-availability",
+    "adapter-registration-does-not-import-vuoro-from-the-local-capture-path",
+    "submission-accepts-only-the-complete-existing-observation-envelope",
+    "submission-requires-transport-idempotency-metadata",
+    "lost-response-retry-through-a-new-service-instance-returns-the-stable-receipt",
+    "missing-sequence-is-rejected-without-advancing-the-origin-cursor",
+    "receipt-lookup-and-bounded-reads-expose-only-observation-state",
+    "runtime-compatibility-check-is-read-only-and-never-migrates",
+    "catalog-operations-are-domain-qualified-and-declare-authority-execution-and-idempotency"
+  ],
+  "faults": [
+    "central-service-unavailable-during-local-append",
+    "lost-submit-response",
+    "service-process-restart-before-retry",
+    "missing-origin-sequence"
+  ],
+  "oracles": [
+    "local-shard-and-rebuilt-sqlite-event-identity",
+    "stable-central-receipt-id-and-duplicate-counter",
+    "origin-next-expected-sequence",
+    "bounded-ingest-offset-watermark",
+    "protocol-v1-catalog-registration"
+  ],
+  "implementation_anchors": [
+    "auditctl/vuoro_adapter.py:VuoroAuditAdapter.register",
+    "auditctl/vuoro_adapter.py:VuoroAuditAdapter.submit_observation",
+    "auditctl/vuoro_adapter.py:VuoroAuditAdapter.lookup_receipt",
+    "auditctl/vuoro_adapter.py:VuoroAuditAdapter.read_observations",
+    "auditctl/vuoro_adapter.py:VuoroAuditAdapter.stream_status",
+    "auditctl/vuoro_adapter.py:VuoroAuditAdapter.schema_compatibility",
+    "auditctl/central.py:ingest_observation",
+    "tests/test_central_pg_integration.py:test_vuoro_adapter_retries_local_outbox_across_service_restart"
+  ],
+  "expansions": ["semantic-doc", "stateful-test", "concurrent-history", "fault-scenario"]
+}
