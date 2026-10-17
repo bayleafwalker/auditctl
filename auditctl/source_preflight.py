@@ -207,8 +207,8 @@ def preflight(manifest_path: Path, expected_manifest_sha256: str) -> dict[str, A
                 payload_digest = {"status": "absent", "sha256": None}
                 record_class = None
 
-            key = event.get("idempotency_key")
-            if key is not None:
+            if "idempotency_key" in event:
+                key = event["idempotency_key"]
                 key = _nonempty(key, "idempotency_key")
                 key_prior = idempotency_keys.get(key)
                 if key_prior is not None and key_prior != (event_id, raw_hash):

@@ -146,6 +146,12 @@ def test_preflight_rejects_idempotency_collision_and_changed_frozen_file(tmp_pat
     with pytest.raises(SourcePreflightError, match="idempotency key collision"):
         preflight(path, digest)
 
+    malformed_key = _legacy("ad:00000000000000000000000004")
+    malformed_key["idempotency_key"] = None
+    path, digest = _write_manifest(tmp_path, [("source-a", [malformed_key])])
+    with pytest.raises(SourcePreflightError, match="idempotency_key must be a non-empty string"):
+        preflight(path, digest)
+
     path, digest = _write_manifest(tmp_path, [("source-a", [_legacy("ad:00000000000000000000000003")])])
     (tmp_path / "private-fixture-0.ndjson").write_bytes(b"changed\n")
     with pytest.raises(SourcePreflightError, match="frozen source changed"):
@@ -161,6 +167,7 @@ def test_cli_is_json_read_only_and_requires_external_manifest_digest(tmp_path: P
     output = runner.invoke(cli, ["source-preflight", "--manifest", str(path), "--manifest-sha256", digest])
     assert output.exit_code == 0, output.output
     assert json.loads(output.output)["qualification"] == "source-only-qualified"
+    assert "private-fixture-0.ndjson" not in output.output
     assert not missing_db.exists()
 
     refused = runner.invoke(cli, ["source-preflight", "--manifest", str(path), "--manifest-sha256", "0" * 64])
