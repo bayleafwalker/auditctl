@@ -9,10 +9,14 @@ governing_decision: auditctl-vuoro-served-audit-alignment@git:0751c6a77cacc5a2dd
 ## Boundary
 
 The central audit schema is an observation ledger and receipt index for a
-served Vuoro audit adapter. It accepts only the existing auditctl
-`record_class=observation` envelope. It has no tables or operations for claims,
-grants, queue leases, knowledge acceptance, authority commands, or remote
-decisions.
+served Vuoro audit adapter. The source schema is version 3 and admits the closed
+`record_class` vocabulary `observation` and `decision` under the existing
+auditctl envelope. The record class preserves the distinction between what was
+observed and a recorded judgment; ingestion does not grant the producer
+settlement authority or apply that judgment to current work. It has no tables or
+operations for grants, queue leases, knowledge acceptance or authority commands.
+Historical decision records remain evidence; current work settlement and effect
+authority stay with their owners.
 
 SQLite remains the machine-local query index and NDJSON remains the portable
 producer/recovery record. A successful local append does not depend on the
@@ -97,7 +101,9 @@ precondition for local append or rebuild.
 
 ## Compatibility and roles
 
-The current central schema is version 2 and serves `audit/v1`. Runtime
+The current source central schema is version 3 and serves `audit/v1`; this is
+not an observation of a deployed schema. Migration 3 adds the decision record
+class without rewriting existing observations. Runtime
 compatibility requires:
 
 - an installed schema within the package's explicit supported range;
@@ -135,3 +141,16 @@ The owner adapter's catalog metadata and handler-to-application-core mapping
 are covered locally. Deployment topology, identity issuance, composed-service
 HTTP fault injection, backup/restore, and cross-machine functional tests
 remain owned by Vuoro composition and appservice rollout work.
+
+## Historical import remains a separate gate
+
+The optional snapshot-attribution CLI consumer is described in
+[attribution-list-snapshots.md](attribution-list-snapshots.md). Neither it nor
+central envelope admission establishes the full S4 import. Original committed
+shards remain authoritative historical bytes until verified import. The
+[Agentops S4 preparation contract](https://github.com/bayleafwalker/agentops/blob/main/docs/plans/2026-10-03-s4-evidence-home-preparation.md)
+requires original digest-domain and provenance preservation, a complete frozen
+manifest, isolated rehearsal, coverage/digest reconciliation, causal absorb
+gates and explicit cutover. Passing synthetic ingestion tests cannot substitute
+for that real-inventory gate. No hook, retention or authority cutover follows
+from this documentation reconciliation.
