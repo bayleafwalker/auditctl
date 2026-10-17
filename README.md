@@ -58,7 +58,7 @@ receipt, bounded-read, stream-status, and compatibility operations when a
 Vuoro service supplies its catalog registry and runtime connection factory.
 Importing the local CLI does not import Vuoro or PostgreSQL.
 [`docs/contracts/central-observation-ingest.md`](docs/contracts/central-observation-ingest.md)
-defines its observation-only PostgreSQL and receipt semantics, while
+defines its closed observation/decision record vocabulary and PostgreSQL receipt semantics, while
 [`docs/operations/central-schema-migrations.md`](docs/operations/central-schema-migrations.md)
 documents explicit deployment migration and compatibility commands. Normal
 `auditctl` startup never connects to or migrates the central schema.
