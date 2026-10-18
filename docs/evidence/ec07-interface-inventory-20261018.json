@@ -1,0 +1,280 @@
+{
+  "purpose": "Read-only EC07 discovery inventory; not a runtime schema, new interface contract, ADR selection or completion packet",
+  "source_commit": "1a76e72da79fffd7d2a18ec38c9e06b950aff023",
+  "scope": "Named Auditctl source files plus three committed consumer edges; not exhaustive estate consumer inventory",
+  "prerequisites": [
+    "Qualified EC00 vuoro#2734 ADR",
+    "EC03 canonical generation before new interfaces",
+    "Deployment remains separate session-owned"
+  ],
+  "source_files_sha256": {
+    "AGENTS.md": "61ddd43086c87e9efe283f8126ac2b0cb73679d870f226cc372f33c001a29e85",
+    "auditctl/cli.py": "1350ffe5b6ba19894493e9b553b6b331e122800d51b9a1fe53a1b33f1ae04d71",
+    "auditctl/ids.py": "945f5063b7189d8a4ca89ef939598c84f08ec2f7d28e604533cf556395b444c5",
+    "auditctl/db.py": "bea9eebcb3e06bf0d08f8f57c0713fe998af6f0c446308b7dacb96a3ea1bf9a4",
+    "auditctl/ndjson.py": "6f842e015c37f416df65659f42f2e4895f3f126b2ed9ea6d03b96798ce781d8c",
+    "auditctl/validation.py": "0745bb2ac0cd7884410615cca22181047240257eb6a13d63c44cdeddc74410a7",
+    "auditctl/central.py": "a98c27c4ea6020957801bb4601535fddf99b805792be84243acdac67d30dc24d",
+    "auditctl/central_schema.py": "05dd416ce71c8a48af85aeb87aa4ba00743ed474f24b7195aa70c14d8a8b714d",
+    "auditctl/central_migrations/__init__.py": "86d64fee58aefcfa9791574762259f84d2272a37a22c468d382f60c6d58e8baf",
+    "auditctl/vuoro_adapter.py": "b833dd8a1860ecf73464a6c9052d7d04bbd0d63f6d620b1bf07b80237e91f244",
+    "auditctl/source_preflight.py": "72ef028832eae1ff6672fdf8b6392d2145408ee7ae18fdc36aa10e372bd1f0ac",
+    "auditctl/attribution_listing.py": "9a6250af785389eb14a5765aa00befe83fd3ac50a49e151de84c8a2e686523d5",
+    "pyproject.toml": "3d76476ad6a4b7279b1a28a1bb0da377af77a2ed9f4eee0cbd0a0ca076ce6508",
+    "uv.lock": "bdc10c6bc3f6c761dce006240dd9b8ed0672426eb756cb3825818faaf02d152f",
+    "docs/protocols/audit-write-and-rebuild.md": "a5898e24c12ef8b580c6c1e15c12ccd3e0e6dde47f9fa31aab7e655043cc436d",
+    "docs/contracts/publisher-subprocess.md": "f94798ed0acffb11645e2abaf6b551d2f3c3595348545f1de8f252e6f5cfecaf",
+    "docs/contracts/central-observation-ingest.md": "13a9ca73b4525352f3a49ac7fda9f3cebab3c93209cf1f4c59b8eae94911157a",
+    "docs/contracts/s4-source-preflight.md": "5a975cd65e8a0af7e83033467ffda2f788bd6bfc75e206fced6212f0d885e34d",
+    "docs/contracts/attribution-list-snapshots.md": "6864f8d0b05e0095323bb4f99c592da709d6a5edd33bcc62756e7310b9dd9ef8",
+    "docs/contracts/evidence-set-and-decision.md": "19149a3e52afb6b6d9f2e2f6f397afe2b3ca86367e66b1dfdf8611263ee69cee",
+    "docs/plans/2026-10-18-kaos-roadmap.md": "459d07659a8a8b77c959128cc4324481c3fd8cb98fccc69bda960b8662ada14e",
+    "tests/test_dual_write.py": "e3019ff5ab2c16952678e268319fa1a9d54da5913344695611bcb9882ef7a24d",
+    "tests/test_rebuild.py": "e189653ad66e3cdf9ca710b4d2cd00ff7da11a4609d2b9f89fd87fdee15809a3",
+    "tests/test_rebuild_provenance.py": "f8a25f43f0e154c48f03288494744684a65c3923436b3a1b3e7fe5fb22bece12",
+    "tests/test_publisher_contract.py": "03dc11ac0f238d44cf50f9abacd7d5e280ca0b5ec084c98e9c051e9773fcc921",
+    "tests/test_central_contract.py": "81c3c6d91b6be45fd263b5a1eb97134b3c287acdd17b1a6103b846cc27ce3b7a",
+    "tests/test_central_pg_integration.py": "d12cc75cdef73e076e43cf1b4fb06da292e0433dcf0dc927ffb60c8fd874cafb",
+    "tests/test_vuoro_adapter.py": "5401913f37ab0d73ee7e7856551584f34aa311e9a44f4053685819170bb61767",
+    "tests/test_source_preflight.py": "950df1f89117d92a541006b4c6f4bbd40737238b385c106617791aee26ee6e75",
+    "tests/test_source_preflight_bounds.py": "dbb9513c290386dd0eaaaea109604b63917dc3d0d3df78cb8a1704cb1f5894cb",
+    "tests/test_attribution_listing.py": "7ffcb89720257ea2388588a5d518e6a9ed1db8b2d97eeb5950df8416d8948988",
+    "tests/test_verification_contracts.py": "a5a1607e37a6388aa3e8ba01b8e19edef512f3432a90ec60dbf030e1311600f7",
+    "auditctl/central_migrations/versions/0001_ingest.sql": "1f6aca04414ca90a41fda2bb894b0d4f9b5c937979fb677139515fdc25ed52be",
+    "auditctl/central_migrations/versions/0002_receipts_and_reads.sql": "66db0101dccde630400ae4e954aa9999ba9e57361dc07a0787ed40eec9a40794",
+    "auditctl/central_migrations/versions/0003_record_class.sql": "3c5b08c5e742b49b7ebcbbf8eb4b8e750039b691a1ea374cf0a3df79e12e1be8",
+    "tests/conftest.py": "b407ef8ada05616ee4c65f69d4a12fe7ced8d25549b6b29ff1d981780be410e1",
+    "tests/test_audit_context.py": "4efa220786fabda1938fa511b40d180d9509a0e703ebe27a9e9e89491140fbdb",
+    "tests/test_cli.py": "93f8cdc5ba35cf815501b31a1b72bdc67b9ed8edc61476aed8f336bfca26ee0d",
+    "tests/test_db.py": "f41deb1090a3f0c6cb47b6f25aa8ba31212bdf6a832703e92cf26be9cf840dde",
+    "tests/test_ids.py": "94e57ce7434c29083973b929e1295038471363ff66fc46465ea88872a57d07ce",
+    "tests/test_paths.py": "925d7f6f2bb96e47857fda993ada20f33570af3147ae93c43d37a81486a67762",
+    "tests/test_release_contract.py": "0bbd045dcfb94b6178bdc5d246fb247bf641e15cd20c7f0de5af8310a88ad06d",
+    "tests/test_validation.py": "749702cdaa3c7c5f878ec29f19773f03a94be76a177fb4a4bc33690a50fe7322",
+    "verification/contexts/archive/vuoro-audit-adapter-2026-10-17-pre-contract-reconciliation.json": "70aaa59347eed073d0c8c9ddf011a60fec8c920daa8ec125e3dd8c03ea0442f4",
+    "verification/contexts/central-observation-ingest.json": "140f459b2eb68fea55b223fd9e7435689e029fbae1288b9ec73b8b402292b0f1",
+    "verification/contexts/rebuild-provenance-identity.json": "393ca48f9267fa2763c8b1ba9b4312e6a6a23844706b2aecceb893579499a647",
+    "verification/contexts/sqlite-ndjson-convergence.json": "acd69536c6a42f70c306723244b307e43d678c7bed44b4154b61f7cebd61092b",
+    "verification/contexts/vuoro-audit-adapter.json": "8f83a20b22fc7ce6c79aed3694c3db0818625e6ff2d7f081bfec07abfd0c1247",
+    "verification/results/central-observation-ingest-item-1201.json": "420f24c3a24c8a1324e71f09a99a7e467aa5006c1b2048900b5fe64e34edee0d",
+    "verification/results/central-observation-ingest-item-2329.json": "c67230741efdfc538c070c54e3bd621d34d2d6dfb17d8cf5ed962e2eedb932a6",
+    "verification/results/central-observation-ingest-kit020-release-0.1.9.json": "7dd87547d6b3f30cc9b15989e8697aaa7a9d0405d5fc602a6f595f41079a176d",
+    "verification/results/central-observation-ingest-record-class.json": "5a4dc67e2121882b51143a57a72f867b5b2f5e4e225544145e37cb82e3cd1a99",
+    "verification/results/central-observation-ingest-release-0.1.8.json": "fab23aa4208dc31360777626a3266c85d70946a11b4843b211993af421349e48",
+    "verification/results/rebuild-provenance-identity-2026-10-18.json": "59b14bf4989eb131e5e455bde0dfee6fbeaa0e21aad5e3af651b20d2e9dbd7e2",
+    "verification/results/sqlite-ndjson-short-write-item-2063.json": "8842e6837e71cc95ded51ab49e0b89cc62a4bec844d54235a52d94b6e0cbebb6",
+    "verification/results/sqlite-wal-startup-retry-item-1207.json": "afecf445a240775669897ae6a00af297b4490af29d54e09827fba3650d42d195",
+    "verification/results/vuoro-audit-adapter-contract-reconciliation-2026-10-17.json": "372daf2b34ef9d2a7f0a7b21732f860a2922046b225012748920124513ef2087",
+    "verification/results/vuoro-audit-adapter-item-1202.json": "7186539efe0435a8e7712498fb56ff0d56b02d8813860b6d183c0691ac5ccb8f",
+    "verification/results/vuoro-audit-adapter-record-class.json": "85812ad74b05010beb45257161b39d9f361404fa9a82bfa689c76622e973e71b"
+  },
+  "cli_commands": [
+    {
+      "name": "source-preflight",
+      "handler": "source_preflight_cmd"
+    },
+    {
+      "name": "add",
+      "handler": "add_cmd"
+    },
+    {
+      "name": "list",
+      "handler": "list_cmd"
+    },
+    {
+      "name": "render",
+      "handler": "render_cmd"
+    },
+    {
+      "name": "rebuild",
+      "handler": "rebuild_cmd"
+    }
+  ],
+  "central_admin_entrypoint": "auditctl.central_schema:main",
+  "served_operations": [
+    {
+      "name": "audit.observation.submit",
+      "required_authority": "audit.observation.submit",
+      "execution_semantics": "write",
+      "idempotency": "required"
+    },
+    {
+      "name": "audit.receipt.lookup",
+      "required_authority": "audit.observation.read",
+      "execution_semantics": "read",
+      "idempotency": "not-allowed"
+    },
+    {
+      "name": "audit.observation.list",
+      "required_authority": "audit.observation.read",
+      "execution_semantics": "read",
+      "idempotency": "not-allowed"
+    },
+    {
+      "name": "audit.stream.status",
+      "required_authority": "audit.observation.read",
+      "execution_semantics": "read",
+      "idempotency": "not-allowed"
+    },
+    {
+      "name": "audit.schema.compatibility",
+      "required_authority": "audit.observation.read",
+      "execution_semantics": "read",
+      "idempotency": "not-allowed"
+    }
+  ],
+  "external_source_edges": [
+    {
+      "repo": "sprintctl",
+      "commit": "3cb38bd21ce8915b279f9c67ec07fc2c64752c16",
+      "path": "sprintctl/cli_runtime.py",
+      "sha256": "64c07b221e9ff5c840c448778dcb2ff9eb6c833234d125550d12f335674d39eb",
+      "kind": "committed-source-consumer-edge; not runtime invocation proof"
+    },
+    {
+      "repo": "agentops",
+      "commit": "47ddcab2c17c17a5b8e2ccedc0fdc31738c700dd",
+      "path": "hooks/log-session-cost.sh",
+      "sha256": "f0e65ff08e5090377374c6a9796ab93bb01b5b1bd00498c5b6db239ac65cfed7",
+      "kind": "committed-source-consumer-edge; not runtime invocation proof"
+    },
+    {
+      "repo": "vuoro",
+      "commit": "aa5af4de351f011c1d4f795eaa72b692c5dfcb47",
+      "path": "packages/vuoro-service/src/vuoro_service/composition.py",
+      "sha256": "23b27e819dade847949d42f809a2ac1304986083ab67acd63949fedbaa89afaf",
+      "kind": "committed-source-consumer-edge; not runtime invocation proof"
+    }
+  ],
+  "boundaries": [
+    {
+      "id": "publisher-subprocess",
+      "producer": "Source-domain publisher after its own authoritative commit",
+      "consumer": "auditctl executable",
+      "semantic_owner": "Source owner for original fact; Auditctl for observation admission",
+      "entrypoint": "auditctl add / docs/contracts/publisher-subprocess.md",
+      "transport": "argv subprocess; no shell or Python client API",
+      "request": "typed refs, bounded summary/detail, JSON metadata, publisher actor/source",
+      "result": "Generated stable ad:event ID and producer origin tuple on success",
+      "errors": "10s timeout/nonzero/missing binary warn in Sprintctl; source operation remains committed",
+      "identity_scope": "Publisher/process actor is distinct from domain actor metadata; refs are not grants",
+      "persistence": "Local SQLite index plus original NDJSON record",
+      "failure_retry": "No publisher blind retry; each add mints a new ID, so reconcile fact refs/metadata before retry",
+      "evidence": "tests/test_publisher_contract.py; Sprintctl committed source edge; Agentops hook source edge",
+      "gaps": "Declared ActionQ/session/review mappings are contracts, not evidence each current publisher is deployed or invoked"
+    },
+    {
+      "id": "local-add",
+      "producer": "Explicit local CLI caller",
+      "consumer": "cli.add_cmd -> db + ndjson",
+      "semantic_owner": "Auditctl local capture",
+      "entrypoint": "auditctl/cli.py:add_cmd",
+      "transport": "CLI argv; SQLite transaction + filesystem locked append/fsync",
+      "request": "Validated event fields, optional resolved provenance/envelope metadata",
+      "result": "Text or JSON event generated by local owner",
+      "errors": "Validation/append/commit errors visible; missing artifacts root refuses writes",
+      "identity_scope": "Stable generated event ID, ledger origin_stream_id and monotonic origin_seq; local repo/artifact-root selection is not remote authorization",
+      "persistence": "NDJSON portable original/recovery source; SQLite derived index and local producer metadata",
+      "failure_retry": "Success establishes both copies; crash/commit failure can leave NDJSON ahead; next allocation reconciles shard prefix first; never one cross-store atomic transaction",
+      "evidence": "tests/test_dual_write.py; tests/test_ids.py; verification/contexts/sqlite-ndjson-convergence.json",
+      "gaps": "Filesystem/locking assumptions and old evidence bounds remain; no distributed or universal power-loss guarantee"
+    },
+    {
+      "id": "local-read-render",
+      "producer": "Local CLI caller",
+      "consumer": "cli.list_cmd/render_cmd -> SQLite query/render",
+      "semantic_owner": "Auditctl local presentation",
+      "entrypoint": "auditctl list / auditctl render",
+      "transport": "CLI text/JSON/markdown over index",
+      "request": "Type/source/time filters and row limit",
+      "result": "Current local indexed events or rendered view",
+      "errors": "Invalid filters/input fail through CLI; absence is not proof estate evidence is complete",
+      "identity_scope": "Local file access; no service tenant authorizer",
+      "persistence": "Reads derived SQLite index; no central connection",
+      "failure_retry": "Read does not import missing shards; rebuild is separate",
+      "evidence": "tests/test_cli.py; tests/test_db.py",
+      "gaps": "Row limit alone is not a generated transport-wide byte budget; no cross-language generated-view qualification"
+    },
+    {
+      "id": "snapshot-attribution-read",
+      "producer": "Explicit CLI caller with frozen overlay/source files",
+      "consumer": "attribution_listing.list_snapshots -> installed agentops helper",
+      "semantic_owner": "Agentops source/overlay verification; Auditctl bounded consumer and display",
+      "entrypoint": "auditctl list --json --attribution-overlay ... --attribution-source ...",
+      "transport": "argv subprocess query-audit-attribution; private disk spool; finite timeout/response budget",
+      "request": "Explicit regular source and overlay files, optional attribution/filter/page controls",
+      "result": "auditctl-list-attribution/v1 wraps unchanged original_event with derived attribution/verification receipt",
+      "errors": "Malformed/oversized/unavailable helper result refuses entire report, never partial output",
+      "identity_scope": "Attribution does not change producer identity, authority, Decision or effective work status",
+      "persistence": "Read-only named snapshots; no index rebuild/update",
+      "failure_retry": "No discovery/automatic tails; caller retains exact frozen original bytes, not reserialized display objects",
+      "evidence": "tests/test_attribution_listing.py; docs/contracts/attribution-list-snapshots.md",
+      "gaps": "Ordinary DB-backed attribution and actual S4 import remain Agentops#2592; helper pin is source qualification, not deployed-version proof"
+    },
+    {
+      "id": "rebuild",
+      "producer": "Operator with original NDJSON shards",
+      "consumer": "cli.rebuild_cmd -> db.import_events",
+      "semantic_owner": "Auditctl convergence",
+      "entrypoint": "auditctl rebuild",
+      "transport": "Filesystem NDJSON -> explicit SQLite writer",
+      "request": "Shard directory and explicit replace/dry-run/index-only policy",
+      "result": "Import/count report, idempotent canonical duplicate handling",
+      "errors": "Complete-input preflight rejects malformed/unsupported/gapped/conflicting records before mutation or replacement",
+      "identity_scope": "Event ID plus persisted canonical content/provenance; legacy envelope absence preserved",
+      "persistence": "Original shards unchanged; destination index reconstructs originals; replace backs up only after preflight",
+      "failure_retry": "Exact canonical duplicates skipped; conflicting same IDs reject whole batch; repeated rebuild converges",
+      "evidence": "tests/test_rebuild.py; tests/test_rebuild_provenance.py",
+      "gaps": "Legacy/known-schema support is not a versioned cross-language decoder registry or whole-estate restore proof"
+    },
+    {
+      "id": "frozen-source-preflight",
+      "producer": "Reviewer supplying manifest plus separately recorded exact SHA256",
+      "consumer": "source_preflight.preflight",
+      "semantic_owner": "Auditctl source validation; Agentops Git/protected-tail verification; Sprintctl destination/S4 admission",
+      "entrypoint": "auditctl source-preflight",
+      "transport": "Explicit no-follow regular files -> bounded JSON report",
+      "request": "auditctl-source-snapshot-manifest/v1 and external manifest digest",
+      "result": "Raw-line offsets/digests, source origin coverage, original/derived digest domains, source-only qualification",
+      "errors": "Duplicate JSON keys, changed files, tuple/id conflicts, gaps or declared-domain digest mismatch refuse; no partial import",
+      "identity_scope": "Manifest scope is asserted, not Git authenticity; unknown original digest domains remain unknown",
+      "persistence": "Read only; max4MiB manifest/512MiB source/100000 declared aggregate lines",
+      "failure_retry": "No DB/central access, source rewriting, import, authority or cutover; splitting streams does not prove full coverage",
+      "evidence": "tests/test_source_preflight.py; tests/test_source_preflight_bounds.py",
+      "gaps": "Actual S4 inventory/provenance/rehearsal/causal gates and canonical foundation remain separate"
+    },
+    {
+      "id": "optional-central-runtime",
+      "producer": "Explicit composed-service caller or local owner-core caller",
+      "consumer": "VuoroAuditAdapter -> central owner functions",
+      "semantic_owner": "Auditctl admission/receipts; Vuoro transport/authentication/repository visibility",
+      "entrypoint": "auditctl/vuoro_adapter.py:VuoroAuditAdapter; five catalog operations",
+      "transport": "Existing protocol-v1 schemas over composed service; explicit connection factory",
+      "request": "Complete supported observation/decision envelope; submit transport key; bounded read selectors",
+      "result": "Stable receipt, observations/offset watermark, contiguous stream status, read-only compatibility",
+      "errors": "Hash/ID/tuple conflict, sequence gap, unsupported class/schema or incompatible runtime role fails closed",
+      "identity_scope": "Required submit/read authorities declared in catalog; actual entitlements/revocation are service qualification, not established by declaration",
+      "persistence": "Explicit central PostgreSQL observation+receipt+cursor transaction, separate from local stores",
+      "failure_retry": "Same origin tuple and canonical record hash yields original receipt after unknown response; receipt/dedup is not work/effect acceptance",
+      "evidence": "tests/test_central_contract.py; tests/test_vuoro_adapter.py; retained disposable-PG result packets",
+      "gaps": "No fresh PostgreSQL, live HTTP, unauthorized tenant/revocation/deletion, cross-machine restore or deployment campaign in this inventory"
+    },
+    {
+      "id": "central-schema-administration",
+      "producer": "Authorized explicit deployment migration process",
+      "consumer": "auditctl-central-schema",
+      "semantic_owner": "Auditctl migration assets; deployment owner for execution/credentials",
+      "entrypoint": "auditctl/central_schema.py:main",
+      "transport": "Explicit administration CLI/PostgreSQL connection",
+      "request": "Versioned immutable SQL assets and configured schema/runtime/migration roles",
+      "result": "Migration/compatibility state from owner entrypoint",
+      "errors": "Checksum drift, newer schema, same migration/runtime role or failed privilege setup refuses",
+      "identity_scope": "Runtime principal only bounded DML/reads; migration owner distinct; no CLI startup automatic migration",
+      "persistence": "Central schema ledger/assets; no local observation dependency",
+      "failure_retry": "Migration advisory lock/checksum/idempotence; source metadata is not current deployment evidence",
+      "evidence": "tests/test_central_contract.py; tests/test_central_pg_integration.py; docs/operations/central-schema-migrations.md",
+      "gaps": "Backup schemas/keys, restore, whole-consumer cutover/rollback and actual DDL denial need release/runtime evidence from deployment owner"
+    }
+  ],
+  "qualification": "Inventory only; EC07 remains pending; no migration, release, deployed or acceptance claim"
+}
