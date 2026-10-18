@@ -27,7 +27,7 @@
   "claims": [
     {
       "property": "the digested central implementation differs from the tree observed by the record-class result (cba8850) only in auditctl.dispatch.json's local-tooling paths and pyproject.toml's version literal",
-      "result": "established-by-diff",
+      "result": "documented-only",
       "evidence": [
         "`git diff cba8850..HEAD` over the eight CENTRAL_IMPLEMENTATION_PATHS touches only auditctl.dispatch.json, changing `skills.template_root` and the validate_verification_artifacts.py invocation from `/projects/dev/agentops/templates/dispatch/...` to `/projects/dev/agentops/...`; none of central.py, the central_migrations tree, or central_schema.py changed",
         "the only further difference in this working tree is pyproject.toml's `version = \"0.1.7\"` -> `\"0.1.8\"`, made for this release",
@@ -36,7 +36,7 @@
     },
     {
       "property": "the central observation-ingest suite, including the disposable-PostgreSQL integration tests, passes against this tree",
-      "result": "observed",
+      "result": "example-tested",
       "evidence": [
         "147 passed, 0 failed, 1 skipped on 2026-09-17 with PostgreSQL 18.6 realized per docs/operations/running-the-central-verification.md (`nix shell nixpkgs#postgresql`)",
         "the sole skip is test_built_wheel_satisfies_release_contract, which only runs once the release workflow has built a dist/ wheel",
@@ -49,6 +49,7 @@
     "This is a re-verification for the 0.1.8 release. It does NOT restate the fault enumeration, history count or per-invariant evidence recorded by item-1201 or the record-class result, because this run did not independently instrument them; those results remain the record of what they each observed and are unchanged.",
     "The reason a new packet exists at all: pyproject.toml is inside the digested implementation set, so a version bump changes the digest of an implementation that did not change. The assertion requires that some result for this context was observed against the currently packaged tree, so a packet is added rather than an existing one restamped.",
     "The PostgreSQL instance was created under a temporary directory by the test fixture and stopped and removed afterward; no shared or production database was addressed.",
-    "auditctl has no local sprintctl tracking; this release was prepared as a direct operator request rather than a numbered work item."
+    "auditctl has no local sprintctl tracking; this release was prepared as a direct operator request rather than a numbered work item.",
+    "2026-10-18 classification-vocabulary correction only: historical established-by-diff is documented-only and observed is example-tested. The original 2026-09-17 execution, evidence, environment and implementation digest remain unchanged; no verification was rerun or newly attributed by this correction."
   ]
 }
