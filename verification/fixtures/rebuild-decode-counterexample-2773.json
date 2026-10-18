@@ -1,0 +1,45 @@
+{
+  "schema_version": "auditctl-rebuild-decode-counterexample/v1",
+  "baseline_sha": "748dae7e6f3abdb361a6b18b5f4fbe69d4a4a2b5",
+  "classification": "observed baseline input-decoding failures before source repair",
+  "tool_versions": {
+    "python": "3.13.16",
+    "sqlite": "3.53.1",
+    "pytest": "9.1.1"
+  },
+  "execution": {
+    "command": "uv run --frozen --no-sync pytest -q tests/test_rebuild_decode_errors.py --tb=short",
+    "failed": 30,
+    "passed": 2,
+    "elapsed_seconds": 0.72,
+    "red_log_sha256": "e0ebafb3112fb7e4b5fb6f04126834551425145a54c18f2039c4b69bfd61111d"
+  },
+  "representative_observations": [
+    {
+      "input": "invalid UTF8 prefix byte0xff",
+      "reader_exception": "UnicodeDecodeError",
+      "reader_code": null,
+      "cli_exit": 1,
+      "cli_output": "Error: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte\n",
+      "absent_destination_created": false
+    },
+    {
+      "input": "JSON nested20000levels",
+      "reader_exception": "RecursionError",
+      "reader_code": null,
+      "in_process_cli_exit": 1,
+      "in_process_cli_output": "",
+      "child_process_exit": 1,
+      "child_process_stderr_kind": "Traceback ending in RecursionError"
+    }
+  ],
+  "retained_controls": [
+    "valid historical large Unicode legacy record rebuilds twice without content change",
+    "valid historical large Unicode enveloped record rebuilds twice without content change"
+  ],
+  "limits": [
+    "No token, credential, production payload or full machine-local traceback is retained",
+    "Initial2000-level array parsed successfully and is excluded from decoder-recursion evidence",
+    "Baseline observations do not establish new atomicity or crash guarantees"
+  ]
+}

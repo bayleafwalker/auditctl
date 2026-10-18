@@ -1,0 +1,81 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "auditctl.event.rebuild-decode-classification",
+  "contract_ref": {
+    "doc_id": "auditctl.audit-write-and-rebuild",
+    "revision": "git:748dae7e6f3abdb361a6b18b5f4fbe69d4a4a2b5"
+  },
+  "implementation_sha": "748dae7e6f3abdb361a6b18b5f4fbe69d4a4a2b5",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite and filesystem NDJSON",
+    "isolation": "single rebuild; actual child CLI processes; independent immutable reads of closed/checkpointed fixture DB",
+    "tool_versions": {
+      "python": "3.13.16",
+      "sqlite": "3.53.1",
+      "pytest": "9.1.1"
+    }
+  },
+  "execution": {
+    "histories": 2,
+    "bounds": {
+      "reader_cases": 4,
+      "cli_no_write_cases": 24,
+      "real_process_cases": 2,
+      "historical_unicode_cases": 2,
+      "rebuild_modes": 3,
+      "destination_states": 2,
+      "decoder_nesting_fixture": 20000,
+      "concurrent_writers": 0
+    },
+    "faults_exercised": [
+      "invalid UTF8 prefix",
+      "invalid UTF8 tail after valid record",
+      "truncated multibyte UTF8 in second shard",
+      "JSON decoder recursion failure"
+    ]
+  },
+  "claims": [
+    {
+      "property": "UTF8 and JSON decoder recursion failures receive existing corrupt_shard reader/CLI classification",
+      "result": "example-tested",
+      "evidence": [
+        "test_reader_decode_failure_uses_corrupt_shard",
+        "test_real_process_rejects_decode_failure_before_replacement"
+      ]
+    },
+    {
+      "property": "Ordinary, dry-run and replacement decode refusals preserve destination, cursor and all source bytes",
+      "result": "example-tested",
+      "evidence": [
+        "test_rebuild_decode_rejection_preserves_sources_destination_and_cursor,24cases"
+      ]
+    },
+    {
+      "property": "Historical large Unicode records with/without envelopes retain exact content and stable-ID retry behavior",
+      "result": "example-tested",
+      "evidence": [
+        "test_valid_historical_large_unicode_record_still_rebuilds_idempotently,2cases"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Baseline invalid UTF8 escaped reader as UnicodeDecodeError and CLI raw codec text; decoder recursion escaped reader/CLI as RecursionError with actual-process traceback.30regressions failed,2validcontrols passed before repair.",
+      "trace_ref": "verification/fixtures/rebuild-decode-counterexample-2773.json"
+    }
+  ],
+  "notes": [
+    "implementation_sha names reviewed base; candidate source/test SHA256: {\"auditctl/ndjson.py\": \"825d90613f8f2b68f8346a2d31cfe4b7002eec65ed67ca1c2ee9ade3a36ca2aa\", \"tests/test_rebuild_decode_errors.py\": \"d9731ccccd4513ba8cbd21bd5d3d564c3ca1da54aae9d13c70bfaf1cde782ec0\"}",
+    "Before product source changes,32-case selection30failed2passed0.72s; all32then passed within focused rebuild/provenance selection88passed1.46s.",
+    "Depth2 includes real filesystem faults and2actual public CLI child processes; all claims remain example-tested, with no concurrent locking/fsync/process-kill/power-loss or cross-store atomicity proof.",
+    "Existing malformed inputs already failed before tested mutation; this repair normalizes classification only. No byte/depth cap, new input format rule, ID/write/cursor/schema/API/IDL/service change.",
+    "Original convergence context/results are unchanged. Existing protocol shard/line-reference wording is outside this stable-code repair, and no such diagnostic is claimed.",
+    "Native2773 only; EC07 remains unchanged/open. Shared genuine outbox artifacts preserved.",
+    "Evidence:docs/evidence/rebuild-decode-classification-2773.md",
+    "Complete full suite267passed11skipped7.81s. Skips are existing optional integration/platform cases; no central PostgreSQL execution claimed.",
+    "Full command:AUDITCTL_TEST_ATTRIBUTION_QUERY=/tmp/auditctl-ec07-reviewed-attribution-query.py UV_PROJECT_ENVIRONMENT=/tmp/auditctl-corrupt-env UV_CACHE_DIR=/tmp/auditctl-corrupt-uv uv run --frozen --no-sync pytest -q --tb=short",
+    "Externally reviewed Agentops attribution helper source7b5c02a; exact helper SHA256:962ed2cf77b34c7dfb1c34ca00cca85fce8bd1e3fc36dacf72aaed777adad4bc. No helper implementation copied into this repository.",
+    "Baseline32-case actual RED log SHA256:e0ebafb3112fb7e4b5fb6f04126834551425145a54c18f2039c4b69bfd61111d; compact observed trace:verification/fixtures/rebuild-decode-counterexample-2773.json"
+  ]
+}

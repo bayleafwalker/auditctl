@@ -100,12 +100,14 @@ def read_events(paths: list[Path]) -> Iterator[dict]:
                         continue
                     try:
                         raw = json.loads(stripped)
-                    except json.JSONDecodeError as exc:
+                    except (json.JSONDecodeError, RecursionError) as exc:
                         raise ImportInputError("corrupt_shard") from exc
                     try:
                         yield validate_event_object(raw)
                     except (TypeError, ValueError) as exc:
                         raise ImportInputError(_validation_code(raw)) from exc
+        except UnicodeDecodeError as exc:
+            raise ImportInputError("corrupt_shard") from exc
         except FileNotFoundError as exc:
             raise ImportInputError("missing_shard") from exc
         except OSError as exc:

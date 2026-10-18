@@ -1,0 +1,100 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "auditctl.event.rebuild-decode-classification",
+  "owner_repo": "auditctl",
+  "subject": "typed shard input decoding refusal before rebuild mutation",
+  "contract_ref": {
+    "doc_id": "auditctl.audit-write-and-rebuild",
+    "revision": "git:748dae7e6f3abdb361a6b18b5f4fbe69d4a4a2b5"
+  },
+  "source_of_truth": "existing audit-write/rebuild draft, native2773 decision note5557 and frozen Release b9ba24b691458ecfd48df148a8f9d0166441126d2b8d0b49fe52d3caea3446f8",
+  "depth": 2,
+  "backends": [
+    "temporary SQLite",
+    "temporary filesystem NDJSON"
+  ],
+  "actors": [
+    "in-process rebuilder",
+    "child-process rebuilder",
+    "independent durable reader"
+  ],
+  "initial_state": [
+    "UTF8 corruption or decoder-recursive JSON at prefix/tail/second-shard positions",
+    "destination absent or seeded with an observation and producer cursor",
+    "valid large Unicode legacy/envelope controls"
+  ],
+  "operations": [
+    {
+      "name": "read shard stream",
+      "actors": [
+        "in-process rebuilder"
+      ],
+      "synchronization": "valid prefix can yield before a later input decoding failure"
+    },
+    {
+      "name": "rebuild ordinary/dry-run/replace",
+      "actors": [
+        "in-process rebuilder",
+        "child-process rebuilder"
+      ],
+      "synchronization": "read complete input batch before opening/moving destination"
+    },
+    {
+      "name": "compare durable files and rows",
+      "actors": [
+        "independent durable reader"
+      ],
+      "synchronization": "after rejected rebuild; immutable connection only after fixture writer closed"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "existing typed preflight failure boundary"
+  },
+  "assumptions": {
+    "isolation": "single rebuilder per fixture, child processes invoke public CLI; no concurrent writers",
+    "clock": "none",
+    "fairness": "none",
+    "decoding": "existing strict UTF8; decoder recursion capacity remains interpreter-owned"
+  },
+  "bounds": {
+    "reader_cases": 4,
+    "cli_no_write_cases": 24,
+    "real_process_cases": 2,
+    "historical_unicode_cases": 2,
+    "rebuild_modes": 3,
+    "destination_states": 2,
+    "decoder_nesting_fixture": 20000,
+    "concurrent_writers": 0
+  },
+  "invariants": [
+    "reader UTF8/parser recursion failure uses existing corrupt_shard code",
+    "all rejected modes leave exact source/destination bytes and file sets unchanged",
+    "valid prefix is not partially imported and producer cursor remains unchanged",
+    "replacement does not create backup or move destination on rejected input",
+    "valid historical Unicode legacy/envelope records retain idempotent stable-ID rebuild"
+  ],
+  "faults": [
+    "invalid UTF8 prefix",
+    "invalid UTF8 tail after valid record",
+    "truncated multibyte UTF8 in second shard",
+    "JSON decoder recursion failure"
+  ],
+  "oracles": [
+    "ImportInputError.code comparison",
+    "exact CLI output/return code",
+    "real child process stderr/exit",
+    "exact before/after fixture files",
+    "independent immutable SQLite dump",
+    "repeated large-Unicode rebuild with exact content comparison"
+  ],
+  "implementation_anchors": [
+    "auditctl/ndjson.py:read_events",
+    "auditctl/cli.py:rebuild_cmd",
+    "tests/test_rebuild_decode_errors.py"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "fault-scenario"
+  ]
+}
