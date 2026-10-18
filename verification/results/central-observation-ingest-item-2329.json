@@ -27,7 +27,7 @@
   "claims": [
     {
       "property": "the digested central implementation is byte-identical to the tree observed by agentops#1201, apart from the pyproject version literal",
-      "result": "established-by-diff",
+      "result": "documented-only",
       "evidence": [
         "`git diff 5f45f12..HEAD` over the seven CENTRAL_IMPLEMENTATION_PATHS is empty; 5f45f12 is the 0.1.6 release commit item-1201 was restamped against",
         "the sole difference from 5f45f12 in this tree is pyproject.toml's `version = \"0.1.6\"` -> `\"0.1.7\"`",
@@ -36,7 +36,7 @@
     },
     {
       "property": "the central observation-ingest suite, including the disposable-PostgreSQL integration tests, passes against this tree",
-      "result": "observed",
+      "result": "example-tested",
       "evidence": [
         "144 passed, 0 failed on 2026-08-30 with PostgreSQL 18.6 realized per docs/operations/running-the-central-verification.md",
         "the run taken before this packet existed was 143 passed, 1 failed -- the single failure being the digest assertion reporting that no result had been observed against this tree"
@@ -48,6 +48,7 @@
     "This is a re-verification commissioned by agentops#2329 for the 0.1.7 release. It does NOT restate the fault enumeration, history count or per-invariant evidence recorded by item-1201, because this run did not independently instrument them. Item-1201 remains the record of that observation, and it is unchanged.",
     "The reason a new packet exists at all: pyproject.toml is inside the digested implementation set, so a version bump changes the digest of an implementation that did not change. Until 2026-08-30 the digest assertion named one packet, so the only route back to green was to rewrite that packet's implementation_sha -- which would make its claims, counterexamples and notes describe a tree they were never observed against. The 0.1.6 release did exactly that, so item-1201's stated implementation_sha post-dates the run it describes.",
     "The assertion now requires that some result for this context was observed against the packaged tree, which keeps the guarantee that what ships has been verified while letting observations accumulate instead of overwriting each other.",
-    "The PostgreSQL instance was created under /tmp and stopped and removed by the test fixture; no shared or production database was addressed."
+    "The PostgreSQL instance was created under /tmp and stopped and removed by the test fixture; no shared or production database was addressed.",
+    "2026-10-18 classification-vocabulary correction only: historical established-by-diff is documented-only and observed is example-tested. The original 2026-08-30 execution, evidence, environment and implementation digest remain unchanged; no verification was rerun or newly attributed by this correction."
   ]
 }
