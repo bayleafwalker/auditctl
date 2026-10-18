@@ -1,0 +1,85 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "auditctl.event.rebuild-provenance-identity",
+  "owner_repo": "auditctl",
+  "subject": "local-event-retry-identity",
+  "contract_ref": {
+    "doc_id": "auditctl.audit-write-and-rebuild",
+    "revision": "git:f813966de9d93866112403197fb4b9df5473179a"
+  },
+  "source_of_truth": "authored-NDJSON-and-persisted-SQLite-event",
+  "depth": 1,
+  "backends": [
+    "sqlite",
+    "filesystem-ndjson"
+  ],
+  "actors": [
+    "rebuilder"
+  ],
+  "initial_state": [
+    "temporary empty ledger or ledger containing one validated event"
+  ],
+  "operations": [
+    {
+      "name": "import_events",
+      "actors": [
+        "rebuilder"
+      ]
+    },
+    {
+      "name": "rebuild",
+      "actors": [
+        "rebuilder"
+      ],
+      "parameters": {
+        "modes": [
+          "normal",
+          "dry-run",
+          "replace"
+        ]
+      }
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "event-id-and-complete-persisted-provenance"
+  },
+  "assumptions": {
+    "isolation": "single writer; in-memory or temporary SQLite database",
+    "clock": "fixed test timestamps",
+    "fairness": "none"
+  },
+  "bounds": {
+    "context_differences": 8,
+    "envelope_states": 2,
+    "initial_ledger_states": 2,
+    "cli_rebuild_modes": 3
+  },
+  "invariants": [
+    "same-ID persisted context differences reject the entire batch without mutation",
+    "exact retries including historical context absence remain idempotent",
+    "local context does not enter the central observation digest domain"
+  ],
+  "faults": [
+    "same-ID conflicting provenance",
+    "same-ID removed context or stream-class"
+  ],
+  "oracles": [
+    "SQLite dump unchanged after refusal",
+    "source and destination file bytes unchanged after CLI refusal",
+    "imported and skipped counts",
+    "round-trip event equality",
+    "central prepared observation equality"
+  ],
+  "implementation_anchors": [
+    "auditctl/db.py:_canonical_import_record",
+    "auditctl/db.py:import_events",
+    "auditctl/cli.py:rebuild_cmd",
+    "tests/test_rebuild_provenance.py:test_import_rejects_changed_provenance_without_mutation",
+    "tests/test_rebuild_provenance.py:test_exact_provenance_retry_and_legacy_absence_remain_idempotent"
+  ],
+  "expansions": [
+    "stateful-test",
+    "fault-scenario"
+  ]
+}

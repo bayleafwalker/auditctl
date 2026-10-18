@@ -1,0 +1,85 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "auditctl.event.rebuild-provenance-identity",
+  "contract_ref": {
+    "doc_id": "auditctl.audit-write-and-rebuild",
+    "revision": "git:f813966de9d93866112403197fb4b9df5473179a"
+  },
+  "implementation_sha": "7f09c6a2ceb60f26dd62b2e61bd724cc46c6280d",
+  "depth": 1,
+  "environment": {
+    "backend": "temporary-local-sqlite-and-filesystem-ndjson",
+    "isolation": "single writer; isolated in-memory databases and pytest temporary repository/artifact roots",
+    "tool_versions": {
+      "python": "3.13.16",
+      "sqlite": "3.53.1",
+      "pytest": "9.1.1"
+    }
+  },
+  "execution": {
+    "histories": 42,
+    "bounds": {
+      "provenance_collision_cases": 32,
+      "exact_retry_cases": 4,
+      "cli_refusal_cases": 5,
+      "central_digest_cases": 1,
+      "full_suite_passed": 235,
+      "full_suite_skipped": 11
+    },
+    "faults_exercised": [
+      "same-ID context field mutation",
+      "same-ID context absence",
+      "same-ID optional stream-class absence"
+    ]
+  },
+  "claims": [
+    {
+      "property": "same-ID differing persisted provenance is rejected without destination mutation in batch and existing-ledger imports",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_rebuild_provenance.py:test_import_rejects_changed_provenance_without_mutation; all eight mutations with and without envelope, in empty and seeded ledgers"
+      ]
+    },
+    {
+      "property": "exact retries preserve absent historical context and five-field context without adding stream_class",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_rebuild_provenance.py:test_exact_provenance_retry_and_legacy_absence_remain_idempotent"
+      ]
+    },
+    {
+      "property": "normal, dry-run and replacement rebuild refuse conflicting provenance before changing destination or source bytes",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_rebuild_provenance.py:test_rebuild_rejects_provenance_collision_before_writing; batch collision in all modes and destination-only collision in normal/dry-run"
+      ]
+    },
+    {
+      "property": "local context comparison leaves central observation and payload digests unchanged",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_rebuild_provenance.py:test_local_provenance_does_not_change_central_digest_domain",
+        "tests/test_central_contract.py"
+      ]
+    },
+    {
+      "property": "rebased repair passes the complete available suite",
+      "result": "example-tested",
+      "evidence": [
+        "AUDITCTL_TEST_ATTRIBUTION_QUERY=/projects/dev/agentops/scripts/query_audit_attribution.py uv run --frozen pytest -q: 235 passed, 11 skipped in 8.75s"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Before repair the first new parameterized test failed with DID NOT RAISE: two valid same-ID legacy events with differing resolved_context.repo_id were silently deduplicated.",
+      "trace_ref": "tests/test_rebuild_provenance.py:test_import_rejects_changed_provenance_without_mutation"
+    }
+  ],
+  "notes": [
+    "The scoped depth-1 cases are deterministic example histories, not a generated reference model, exhaustive protocol proof, concurrency proof or PostgreSQL verification.",
+    "Independent parent review found no blockers and independently ran all 42 provenance tests.",
+    "Root verification artifact validation encounters an unchanged historical packet central-observation-ingest-item-2329.json using unsupported established-by-diff classification; the new context/result are validated explicitly.",
+    "No production artifacts, service operations, DDL, versions, credentials, central digest definitions or historical rows were changed."
+  ]
+}

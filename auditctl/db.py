@@ -334,6 +334,11 @@ def _canonical_import_record(event: dict[str, Any]) -> str:
         "metadata": event["metadata"],
         "created_at": event["created_at"],
     }
+    # Provenance is persisted independently of the producer payload. Include it
+    # in local retry identity without changing the central payload/digest domain.
+    # Historical absence remains absence rather than an invented context.
+    if "resolved_context" in event:
+        record["resolved_context"] = event["resolved_context"]
     if event.get("origin_stream_id") is not None:
         record.update(
             {
