@@ -39,7 +39,14 @@ an explicit regular file. The tool checks the externally supplied manifest
 digest, each whole-file byte count and digest, final newline, and exact line
 count before parsing. Reports include source ids, scope, counts and digests,
 not local paths or event payloads. Files and manifests are bounded to 512 MiB
-and 4 MiB respectively.
+and 4 MiB respectively. A manifest may declare at most 100,000 source lines
+across all files, including exact duplicate copies. Over-bound manifests are
+refused before any source is opened; actual line counts must still match the
+frozen descriptors. Line framing is scanned without building a full line list,
+so the per-record report cannot grow independently of the declared record bound.
+A larger inventory needs a separately reviewed qualification strategy; splitting
+a producer stream across independent runs does not establish its full sequence
+coverage.
 Both manifest and source are opened with no-follow and nonblocking flags and
 checked as regular files before reading, so a symlink or FIFO is refused.
 The `scope` value is a manifest assertion; this command does not verify Git

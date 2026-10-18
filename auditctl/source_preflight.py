@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import re
 import stat
-from typing import Any
+from typing import Any, Iterator
 
 from .central import prepare_observation
 from .validation import validate_event_object
@@ -23,6 +23,7 @@ _HEX = re.compile(r"^[0-9a-f]{64}$")
 _MANIFEST_SCHEMA = "auditctl-source-snapshot-manifest/v1"
 _MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 _MAX_SOURCE_BYTES = 512 * 1024 * 1024
+_MAX_RECORDS = 100_000
 
 
 class SourcePreflightError(ValueError):
@@ -134,6 +135,7 @@ def _load_manifest(raw: bytes, expected_sha256: str) -> tuple[dict[str, Any], st
         raise SourcePreflightError("manifest sources must be a non-empty array")
     seen: set[str] = set()
     total_bytes = 0
+    total_records = 0
     for source in manifest["sources"]:
         _exact_fields(
             source,
@@ -150,7 +152,9 @@ def _load_manifest(raw: bytes, expected_sha256: str) -> tuple[dict[str, Any], st
             raise SourcePreflightError("unsupported source scope")
         _nonempty(source["path"], "source path")
         total_bytes += _positive(source["byte_count"], "source byte_count")
-        _positive(source["line_count"], "source line_count")
+        total_records += _positive(source["line_count"], "source line_count")
+        if total_records > _MAX_RECORDS:
+            raise SourcePreflightError("source set exceeds the 100,000 record bound")
         if type(source["sha256"]) is not str or not _HEX.fullmatch(source["sha256"]):
             raise SourcePreflightError("source sha256 must be lowercase hex")
         domain = source.get("record_digest_domain", "unknown")
@@ -162,6 +166,16 @@ def _load_manifest(raw: bytes, expected_sha256: str) -> tuple[dict[str, Any], st
     return manifest, actual
 
 
+def _source_lines(raw: bytes) -> Iterator[bytes]:
+    """Preserve splitlines framing without materializing a second source copy."""
+    start = 0
+    for boundary in re.finditer(rb"\r\n|\r|\n", raw):
+        yield raw[start:boundary.end()]
+        start = boundary.end()
+    if start < len(raw):
+        yield raw[start:]
+
+
 def _read_frozen_source(source: dict[str, Any], manifest_path: Path) -> bytes:
     path = Path(source["path"])
     if not path.is_absolute():
@@ -171,8 +185,11 @@ def _read_frozen_source(source: dict[str, Any], manifest_path: Path) -> bytes:
         raise SourcePreflightError(f"frozen source changed: {source['source_id']}")
     if not raw.endswith(b"\n"):
         raise SourcePreflightError(f"frozen source lacks final newline: {source['source_id']}")
-    lines = raw.splitlines(keepends=True)
-    if len(lines) != source["line_count"] or any(not line.strip() for line in lines):
+    line_count = 0
+    for line_count, line in enumerate(_source_lines(raw), start=1):
+        if line_count > source["line_count"] or not line.strip():
+            raise SourcePreflightError(f"frozen source line framing changed: {source['source_id']}")
+    if line_count != source["line_count"]:
         raise SourcePreflightError(f"frozen source line framing changed: {source['source_id']}")
     return raw
 
@@ -195,7 +212,7 @@ def preflight(manifest_path: Path, expected_manifest_sha256: str) -> dict[str, A
     for source in manifest["sources"]:
         source_raw = _read_frozen_source(source, manifest_path)
         byte_offset = 0
-        for line_number, raw_line in enumerate(source_raw.splitlines(keepends=True), start=1):
+        for line_number, raw_line in enumerate(_source_lines(source_raw), start=1):
             event = _json(raw_line.rstrip(b"\r\n"), label="event")
             if type(event) is not dict:
                 raise SourcePreflightError("source record must be a JSON object")
