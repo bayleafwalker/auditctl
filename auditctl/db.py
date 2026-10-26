@@ -540,6 +540,34 @@ def query_events(
     return [_row_to_event(row) for row in conn.execute(sql, params).fetchall()]
 
 
+def find_semantic_observations_by_key(
+    conn: sqlite3.Connection, interpretation_key: str
+) -> list[dict[str, Any]]:
+    """Find prior semantic outputs by payload key without a schema migration."""
+    rows = conn.execute(
+        "SELECT * FROM audit_event WHERE type = ? AND source = ? ORDER BY ts ASC, id ASC",
+        ("semantic.observation", "semantic-consumer"),
+    )
+    matches: list[dict[str, Any]] = []
+    for row in rows:
+        metadata = json.loads(row["metadata"] or "{}")
+        semantic = metadata.get("semantic_observation") if isinstance(metadata, dict) else None
+        if isinstance(semantic, dict) and semantic.get("interpretation_key") == interpretation_key:
+            matches.append(_row_to_event(row))
+    return matches
+
+
+def find_semantic_observation_by_id(
+    conn: sqlite3.Connection, event_id: str
+) -> dict[str, Any] | None:
+    """Find one local semantic observation by its immutable Auditctl event ID."""
+    row = conn.execute(
+        "SELECT * FROM audit_event WHERE id = ? AND type = ? AND source = ?",
+        (event_id, "semantic.observation", "semantic-consumer"),
+    ).fetchone()
+    return _row_to_event(row) if row is not None else None
+
+
 def import_events(
     conn: sqlite3.Connection,
     events: Iterable[dict[str, Any]],
