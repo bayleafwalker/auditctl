@@ -1,6 +1,6 @@
 ---
 doc_id: auditctl.publisher-subprocess
-contract_version: 3
+contract_version: 4
 status: adopted
 supersedes: null
 ---
@@ -34,6 +34,68 @@ The top-level audit actor identifies the process identity that published the
 observation. When a domain operation has a distinct actor, the publisher also
 records that domain actor in metadata. This preserves who invoked auditctl and
 who performed the source operation without conflating them.
+
+## Asynchronous semantic-observation replay
+
+An authorized evidence consumer may run after its source owner commits and
+invoke `auditctl semantic-replay` with an exact frozen source manifest and an
+out-of-process result. The consumer owns source authorization, model or
+deterministic extraction, durable attempt status, and retry scheduling. Auditctl
+does not fetch source material, call a model, schedule jobs, or create a queue.
+Unavailable, denied, timed-out, or failed attempts remain consumer operational
+status; they are not negative semantic observations.
+
+The manifest uses `auditctl-source-snapshot-manifest/v1` and is admitted only
+after source-preflight verifies its recorded byte counts and digests. The result
+uses `semantic-observation/v1`, is at most 64 KiB, and is accepted only when its
+canonical UTF-8 JSON bytes match the caller-supplied SHA-256. The admitted
+`semantic_result_sha256` is retained in the event metadata. The result contains
+a one-line statement of at most 512 UTF-8 bytes, a work reference and revision,
+producer/model or recipe provenance, extraction time, explicit generation and
+supersedes reference, and bounded usage/billing provenance. Unknown fields, raw
+prompts, transcripts, and unbounded output are rejected.
+
+`source_basis_ref` is `artifact:sha256:<manifest SHA-256>` and
+`source_basis_sha256` is `sha256:<same manifest SHA-256>`. The immutable source
+manifest and its source files remain with their owners; Auditctl stores the
+bounded result and content-addressed basis reference, not a replacement copy of
+those artifacts. Replay refuses to append into a shard that aliases the
+manifest, result, or any frozen source file. Semantic results are ordinary
+`observation` records and cannot settle work or apply effects.
+
+The `artifact:sha256:` value is a content identifier, not a fetch URL. The
+source owner or its authorized artifact registry must retain the exact manifest
+bytes and a permitted way to resolve them for later consumers. A consumer that
+cannot resolve and qualify the basis must leave the result unused. Auditctl
+does not archive or dereference source artifacts.
+
+The `interpretation_key` is a domain-separated digest over the case, exact
+source-basis reference and digest, work reference and revision, extraction
+kind, recipe digest, producer model, profile, and explicit analysis generation.
+Generation 1 has no `supersedes` reference. A later generation must reference
+an existing lower-generation semantic observation for the same case and work;
+it gets a distinct interpretation key while the previous observation remains
+unchanged.
+
+Within one local Auditctl ledger, replay checks the interpretation key under
+the existing SQLite `BEGIN IMMEDIATE` writer transaction before allocating an
+origin sequence. An exact same-key payload retry returns the original event ID
+and origin sequence and writes no second shard line. Reusing a key with changed
+content, or finding more than one existing event for it, is a conflict. These
+semantics apply only to callers using the same local ledger and writer path;
+they do not claim cross-ledger or central exactly-once processing.
+Generic `auditctl add` rejects the `semantic.observation` type and
+`semantic-consumer` source so a publisher cannot bypass these replay checks.
+
+The local write keeps the existing SQLite/NDJSON ordering and recovery rules.
+If the caller loses the local response after the NDJSON append, it retries with
+the same manifest and result bytes. Auditctl reconciles NDJSON-ahead state
+before the key lookup, then returns the original local event. For a lost
+central-ingest response, the consumer retries the original local envelope from
+NDJSON under the central observation-ingest contract; it does not mint a
+replacement event. A successful local response proves only that the local
+copies were written. It does not prove central receipt, model correctness, or
+work completion.
 
 ## Sprintctl mapping
 
@@ -322,6 +384,6 @@ is not shipped here; where it lives and how it is scheduled remain open.
 
 Adding an event type or changing required metadata is a versioned contract
 change. Version 2 adds `candidate.reviewed`. Version 3 adds `harness.baseline`
-and the `baseline:` typed ref prefix. Existing event types, typed refs, and the
-warn-only failure posture remain backward-compatible requirements from
-version 1.
+and the `baseline:` typed ref prefix. Version 4 adds the bounded semantic
+observation replay boundary. Existing event types, typed refs, and the warn-only
+failure posture remain backward-compatible requirements from version 1.
