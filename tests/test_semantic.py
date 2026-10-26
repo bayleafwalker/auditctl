@@ -368,6 +368,32 @@ def test_semantic_replay_recovers_after_ndjson_append_with_lost_local_response(
     assert len(json.loads(listed.output)) == 1
 
 
+def test_semantic_observation_rebuild_round_trips_result_and_digest(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    manifest, manifest_sha, _ = _manifest(tmp_path)
+    result, result_sha = _write_result(tmp_path, _result(manifest_sha))
+    published = _invoke(manifest, manifest_sha, result, result_sha)
+    assert published.exit_code == 0, published.output
+    receipt = json.loads(published.output)
+    shard = Path(receipt["ndjson_path"])
+
+    database = repo_root / ".auditctl" / "auditctl.db"
+    database.unlink()
+    rebuilt = CliRunner().invoke(cli, ["rebuild", "--from-ndjson", str(shard)])
+    assert rebuilt.exit_code == 0, rebuilt.output
+    replayed = CliRunner().invoke(cli, ["list", "--type", "semantic.observation", "--json"])
+    assert replayed.exit_code == 0, replayed.output
+    [event] = json.loads(replayed.output)
+    assert event["event_id"] == receipt["event_id"]
+    assert event["metadata"]["semantic_result_sha256"] == f"sha256:{result_sha}"
+    assert event["metadata"]["semantic_observation"] == _result(manifest_sha)
+
+    rebuilt_again = CliRunner().invoke(cli, ["rebuild", "--from-ndjson", str(shard)])
+    assert rebuilt_again.exit_code == 0, rebuilt_again.output
+    assert "0 imported, 1 skipped" in rebuilt_again.output
+
+
 def test_semantic_replay_rejects_changed_source_and_result_basis_mismatch(
     repo_root: Path, tmp_path: Path
 ) -> None:
