@@ -863,7 +863,20 @@ def test_semantic_replay_contract_freezes_local_retry_and_authority_boundary() -
     assert "canonical UTF-8 JSON bytes match the caller-supplied SHA-256" in normalized
     assert "`semantic_result_sha256` is retained in the event metadata" in normalized
     assert "content identifier, not a fetch URL" in normalized
-    assert "source owner or its authorized artifact registry must retain the exact manifest bytes" in normalized
+    assert "owner of every source (or an already-authorized registry acting for all of them)" in normalized
+    assert "Retain the exact path-bearing v1 manifest privately and immutably" in normalized
+    assert "local preflight input, not a portable owner archive" in normalized
+    assert "4 MiB" in normalized
+    assert "16 KiB" in normalized
+    assert "owner revisions, privacy classes, retention terms, or stable external source references" in normalized
+    assert "immutable, owner-attested resolver record keyed by that exact manifest digest and `source_id`" in normalized
+    assert "stable, permission-checked `source_ref`, owning source ID, owner revision" in normalized
+    assert "privacy class, and retention/expiry" in normalized
+    assert "must not be filesystem paths, credentials, or other secret locators" in normalized
+    assert "authenticated by the source owner's existing identity/trust mechanism" in normalized
+    assert "leaves the inference unused and reports the basis as unavailable/unknown" in normalized
+    assert "source inventory must name the owner and existing resolver for every `source_id`" in normalized
+    assert "this Auditctl change does not identify that owner map" in normalized
     assert "Generation 1 has no `supersedes` reference" in contract
     assert "An exact same-key payload retry returns the original event ID and origin sequence" in normalized
     assert "same manifest and result bytes" in normalized
