@@ -5,7 +5,7 @@
     "doc_id": "auditctl.publisher-subprocess",
     "revision": "4"
   },
-  "implementation_sha": "0331e78670a155b97404c2987d0b35342993bae2",
+  "implementation_sha": "0faa62c5de30b332d0f372875b4b1351a7b3b088",
   "depth": 2,
   "environment": {
     "backend": "SQLite 3.53.1 with temporary local NDJSON shards and frozen source files",
