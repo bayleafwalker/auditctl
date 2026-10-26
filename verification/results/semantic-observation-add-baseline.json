@@ -1,0 +1,49 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "semantic-observation-add-baseline",
+  "contract_ref": {
+    "doc_id": "auditctl.publisher-subprocess",
+    "revision": "3"
+  },
+  "implementation_sha": "3bf7bcbd5b47563eef4cacf81534e2f9b4dd7047",
+  "depth": 0,
+  "environment": {
+    "backend": "SQLite 3.53.1 with a temporary local NDJSON shard",
+    "tool_versions": {
+      "python": "3.12.14",
+      "uv": "0.12.23",
+      "auditctl": "0.1.9"
+    }
+  },
+  "execution": {
+    "histories": 1,
+    "bounds": {
+      "replays": 2,
+      "repo_scope": "temporary isolated fixture"
+    },
+    "faults_exercised": [
+      "identical generic add payload submitted twice"
+    ]
+  },
+  "claims": [
+    {
+      "property": "The merged generic add path does not deduplicate semantic observations by interpretation_key.",
+      "result": "example-tested",
+      "evidence": [
+        "Two identical calls returned distinct generated event IDs.",
+        "The temporary local ledger contained two semantic.observation rows.",
+        "Reproduction was run against merged base 3bf7bcbd5b47563eef4cacf81534e2f9b4dd7047."
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "A retry through generic add emitted a second durable event for the same semantic interpretation key.",
+      "trace_ref": "temporary CliRunner reproduction; exact IDs discarded with the temporary repository"
+    }
+  ],
+  "notes": [
+    "This is a baseline reproduction of the merged plan's retry gap, not a production incident.",
+    "No production database, central service, or shared artifact was opened or changed."
+  ]
+}
