@@ -64,10 +64,55 @@ manifest, result, or any frozen source file. Semantic results are ordinary
 `observation` records and cannot settle work or apply effects.
 
 The `artifact:sha256:` value is a content identifier, not a fetch URL. The
-source owner or its authorized artifact registry must retain the exact manifest
-bytes and a permitted way to resolve them for later consumers. A consumer that
-cannot resolve and qualify the basis must leave the result unused. Auditctl
-does not archive or dereference source artifacts.
+`auditctl-source-snapshot-manifest/v1` used here is a local preflight input, not
+a portable owner archive: it contains filesystem `path` values and does not
+carry owner revisions, privacy classes, retention terms, or stable external
+source references. Auditctl does not copy those paths into event metadata. The
+event hash alone therefore does not make this basis retrievable by a later
+consumer. The manifest reader accepts up to 4 MiB, while the existing canonical
+NDJSON writer limits each event line to 16 KiB. Embedding the full manifest
+would exceed the record contract for valid source sets; a partial projection
+would not replace the hash-bound manifest and could disclose path values.
+
+Before an observation is treated as reusable outside the publishing
+environment, the owner of every source (or an already-authorized registry
+acting for all of them) must establish this retrieval contract. This uses the
+source owners' existing authority and retention policy; it does not authorize
+an Auditctl artifact store:
+
+- Retain the exact path-bearing v1 manifest privately and immutably under the
+  `artifact:sha256:<digest>` key named by the observation for at least the
+  associated evidence-retention period. Never replace different bytes under an
+  existing digest, and do not expose its filesystem paths in a resolver
+  response.
+- Publish an immutable, owner-attested resolver record keyed by that exact
+  manifest digest and `source_id`. Each entry supplies a stable,
+  permission-checked `source_ref`, owning source ID, owner revision, exact
+  content digest and digest domain, privacy class, and retention/expiry. The
+  record also carries the captured work reference/revision and capture time.
+  The attestation must be authenticated by the source owner's existing
+  identity/trust mechanism, and the registry must not rewrite a bound entry.
+  Refs must not be filesystem paths, credentials, or other secret locators;
+  raw source contents stay with their owners. Producer/model and profile
+  provenance remain in the bounded semantic result.
+- Resolve the manifest digest to its exact privately retained bytes and the
+  resolver record to each immutable source artifact under the requesting
+  consumer's authority. Consumers verify the manifest digest, owner attestation,
+  source digests, owner revision, and privacy/retention rules before using an
+  inference. The owner must keep the resolver record and source artifacts
+  available for the promised retention period, then report expiry explicitly.
+- If the manifest or any source is missing, expired, denied, or no longer
+  matches its recorded owner revision, the consumer leaves the inference
+  unused and reports the basis as unavailable/unknown. It must not reinterpret
+  that state as a negative finding.
+
+The current v1 local preflight and this Auditctl implementation do not provide
+that registry, stable source refs, or retrieval check. Until the source owners
+adopt the contract and publish retrievable manifests, replay establishes only
+that the caller could qualify local source files at capture time. The source
+inventory must name the owner and existing resolver for every `source_id`; this
+Auditctl change does not identify that owner map. Auditctl does not archive or
+dereference source artifacts.
 
 The `interpretation_key` is a domain-separated digest over the case, exact
 source-basis reference and digest, work reference and revision, extraction
