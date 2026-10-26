@@ -830,7 +830,7 @@ def test_harness_baseline_contract_freezes_mapping_and_window_semantics() -> Non
     assert "`harness.baseline`" in contract
     assert "harness-baseline" in contract
     assert "baseline:<baseline_hash>" in contract
-    assert "contract_version: 3" in contract
+    assert "contract_version: 4" in contract
     assert "Version 3 adds `harness.baseline`" in normalized
     # The window semantics are the load-bearing part of this mapping: silence
     # asserts the previous baseline, so both trust properties must stay frozen.
@@ -848,6 +848,26 @@ def test_harness_baseline_contract_freezes_mapping_and_window_semantics() -> Non
         "`event_type=harness-baseline`",
     ):
         assert field in contract
+
+
+def test_semantic_replay_contract_freezes_local_retry_and_authority_boundary() -> None:
+    contract = (ROOT / "docs/contracts/publisher-subprocess.md").read_text(encoding="utf-8")
+    normalized = " ".join(contract.split())
+
+    assert "contract_version: 4" in contract
+    assert "`auditctl semantic-replay`" in contract
+    assert "`semantic-consumer` source so a publisher cannot bypass these replay checks" in normalized
+    assert "source authorization, model or deterministic extraction" in normalized
+    assert "does not fetch source material, call a model, schedule jobs, or create a queue" in normalized
+    assert "semantic-observation/v1" in contract
+    assert "canonical UTF-8 JSON bytes match the caller-supplied SHA-256" in normalized
+    assert "`semantic_result_sha256` is retained in the event metadata" in normalized
+    assert "content identifier, not a fetch URL" in normalized
+    assert "source owner or its authorized artifact registry must retain the exact manifest bytes" in normalized
+    assert "Generation 1 has no `supersedes` reference" in contract
+    assert "An exact same-key payload retry returns the original event ID and origin sequence" in normalized
+    assert "same manifest and result bytes" in normalized
+    assert "does not prove central receipt, model correctness, or work completion" in normalized
 
 
 def test_harness_baseline_first_observation_argv_emits_a_valid_shard_observation(
