@@ -1,0 +1,135 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "semantic-observation-replay",
+  "owner_repo": "auditctl",
+  "subject": "Retry-safe local replay of a bounded semantic observation against a frozen source manifest",
+  "contract_ref": {
+    "doc_id": "auditctl.publisher-subprocess",
+    "revision": "contract v4; local dual-write and recovery behavior remains governed by audit-write-and-rebuild"
+  },
+  "source_of_truth": "The local SQLite index reconciled from the original NDJSON shards; the frozen manifest, result file, and source files remain exact immutable replay inputs.",
+  "depth": 2,
+  "backends": [
+    "SQLite local index",
+    "NDJSON local shards",
+    "temporary filesystem source manifest"
+  ],
+  "actors": [
+    "first semantic consumer process",
+    "second semantic consumer process",
+    "Auditctl local writer"
+  ],
+  "initial_state": [
+    "Isolated temporary repository with a valid frozen source manifest and one bounded semantic-observation/v1 result.",
+    "No local semantic.observation exists for the result's interpretation_key.",
+    "Both consumer processes use the same result and source manifest bytes."
+  ],
+  "operations": [
+    {
+      "name": "semantic-replay verifies source bytes and appends a source-linked observation",
+      "actors": [
+        "first semantic consumer process"
+      ],
+      "synchronization": "Existing SQLite writer transaction; source append/fsync precedes SQLite commit.",
+      "parameters": {
+        "result_schema": "semantic-observation/v1",
+        "result_bytes": "canonical UTF-8 JSON pinned by SHA-256",
+        "event_record_class": "observation"
+      }
+    },
+    {
+      "name": "exact same-key result replay",
+      "actors": [
+        "second semantic consumer process"
+      ],
+      "synchronization": "Writer transaction checks existing event payload before origin sequence allocation.",
+      "parameters": {
+        "interpretation_key": "same exact value"
+      }
+    },
+    {
+      "name": "same key with changed result or changed basis",
+      "actors": [
+        "semantic consumer process"
+      ],
+      "parameters": {
+        "expected": "refuse without appending or changing existing evidence"
+      }
+    },
+    {
+      "name": "new analysis generation linked to a prior semantic observation",
+      "actors": [
+        "semantic consumer process"
+      ],
+      "synchronization": "The prior event is looked up inside the same SQLite writer transaction.",
+      "parameters": {
+        "same_case_and_work": true,
+        "prior_generation_less_than_new_generation": true
+      }
+    },
+    {
+      "name": "retry after NDJSON append succeeded but caller response was lost",
+      "actors": [
+        "semantic consumer process",
+        "Auditctl local writer"
+      ],
+      "synchronization": "Inject failure after append/fsync and before SQLite commit; retry reconciles the NDJSON-ahead event before key lookup."
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "at most one local observation per interpretation_key, with exact replay returning the original event identity"
+  },
+  "assumptions": {
+    "isolation": "SQLite BEGIN IMMEDIATE serializes cooperating local publishers; NDJSON append uses Auditctl's existing file lock.",
+    "clock": "The semantic event timestamp is the pinned extracted_at from the result; retries reuse the exact result bytes.",
+    "fairness": "A waiting local writer eventually obtains SQLite's writer lock if the process, filesystem, and database remain available."
+  },
+  "bounds": {
+    "source_manifest_bytes": 4194304,
+    "source_records": 100000,
+    "source_bytes": 536870912,
+    "result_bytes": 65536,
+    "statement_utf8_bytes": 512,
+    "same_key_processes": 2
+  },
+  "invariants": [
+    "Source file bytes and the frozen manifest remain unchanged by replay.",
+    "An exact same-key replay returns the original event_id and origin_seq and does not append a second line.",
+    "The same key with a different canonical payload is refused and leaves the prior event intact.",
+    "A later analysis generation links to an existing lower-generation observation for the same case and work.",
+    "The admitted result's exact canonical byte digest is retained in the immutable event metadata.",
+    "An NDJSON-ahead write is reconciled before retry allocation or deduplication.",
+    "Semantic enrichment remains an observation and does not settle work or apply effects.",
+    "Auditctl local append does not depend on central ingestion or model availability."
+  ],
+  "faults": [
+    "Two independent processes reach semantic replay together for the same interpretation_key.",
+    "NDJSON append/fsync succeeds but the caller receives a simulated error before SQLite commit.",
+    "Frozen source file changes after manifest creation.",
+    "Semantic result hash or basis identity does not match the frozen input.",
+    "Semantic result uses non-canonical JSON bytes despite a matching caller hash.",
+    "Output shard aliases a frozen source, manifest, or result file.",
+    "New generation has no valid prior event reference.",
+    "Generic add attempts to bypass semantic-replay deduplication."
+  ],
+  "oracles": [
+    "Query the local ledger and assert one semantic event for the key.",
+    "Both concurrent invocations return the same event_id and origin_seq; exactly one is marked duplicate.",
+    "After append/response fault, retry returns the original event and rebuild/import converges without a second append.",
+    "Compare frozen source, manifest, and result file bytes before and after each accepted or rejected replay.",
+    "The event metadata semantic_result_sha256 equals the exact accepted result-file digest.",
+    "Rejected input alias or invalid supersedes attempts append no local event.",
+    "A conflicting key result fails with no extra ledger row or origin sequence consumption."
+  ],
+  "implementation_anchors": [
+    "auditctl/semantic.py:validate_result",
+    "auditctl/semantic.py:interpretation_key",
+    "auditctl/cli.py:semantic_replay_cmd",
+    "auditctl/cli.py:_record_event",
+    "auditctl/cli.py:add_cmd",
+    "auditctl/db.py:find_semantic_observations_by_key",
+    "auditctl/db.py:find_semantic_observation_by_id",
+    "auditctl/source_preflight.py:preflight"
+  ]
+}
