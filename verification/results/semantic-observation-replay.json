@@ -86,6 +86,8 @@
       "result": "unknown",
       "evidence": [
         "The workspace provides no owner artifact registry or resolver to verify later retrieval of source_basis_ref.",
+        "The current source manifest v1 contains local filesystem paths and lacks owner revision, privacy class, retention, and stable external source_ref fields.",
+        "The source manifest bound is 4 MiB while the existing NDJSON line bound is 16 KiB, so embedding the full manifest would violate the record contract for valid inputs.",
         "No model, owner outbox/scheduler, central database, or central service was invoked."
       ]
     }
@@ -94,6 +96,6 @@
   "notes": [
     "All writes and fault injections used pytest temporary repositories and artifact roots; no live or shared audit data was opened or changed.",
     "The concurrency result covers one two-process local SQLite/NDJSON history and does not claim cross-ledger or central exactly-once processing.",
-    "artifact:sha256:<manifest digest> is a content identifier; an owning source registry must retain the exact manifest and resolve it under consumer permissions."
+    "artifact:sha256:<manifest digest> is a content identifier. Reuse requires source owners to retain the exact v1 bytes privately and expose an immutable, authenticated resolver index with stable refs, owner revisions, digests/digest domains, privacy classes, and retention/expiry; this external contract is documented but not implemented or verified here."
   ]
 }
