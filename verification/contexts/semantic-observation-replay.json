@@ -101,7 +101,8 @@
     "The admitted result's exact canonical byte digest is retained in the immutable event metadata.",
     "An NDJSON-ahead write is reconciled before retry allocation or deduplication.",
     "Semantic enrichment remains an observation and does not settle work or apply effects.",
-    "Auditctl local append does not depend on central ingestion or model availability."
+    "Auditctl local append does not depend on central ingestion or model availability.",
+    "The hash-only source basis is locally qualified; later reuse requires an existing source-owner resolver and retention contract."
   ],
   "faults": [
     "Two independent processes reach semantic replay together for the same interpretation_key.",
