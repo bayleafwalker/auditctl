@@ -54,6 +54,9 @@ a one-line statement of at most 512 UTF-8 bytes, a work reference and revision,
 producer/model or recipe provenance, extraction time, explicit generation and
 supersedes reference, and bounded usage/billing provenance. Unknown fields, raw
 prompts, transcripts, and unbounded output are rejected.
+The final semantic event still must fit Auditctl's existing 16 KiB canonical
+NDJSON line bound. If the complete envelope exceeds that limit, Auditctl
+rejects it without truncation or append.
 
 `source_basis_ref` is `artifact:sha256:<manifest SHA-256>` and
 `source_basis_sha256` is `sha256:<same manifest SHA-256>`. The immutable source
@@ -88,19 +91,27 @@ an Auditctl artifact store:
 - Publish an immutable, owner-attested resolver record keyed by that exact
   manifest digest and `source_id`. Each entry supplies a stable,
   permission-checked `source_ref`, owning source ID, owner revision, exact
-  content digest and digest domain, privacy class, and retention/expiry. The
-  record also carries the captured work reference/revision and capture time.
+  content digest and digest domain, privacy class, and retention/expiry. Each
+  source entry carries its own `captured_at`; the complete record carries the
+  work reference/revision and a separate `snapshot_captured_at`. It is bounded
+  to 4 MiB and 100,000 source entries. Do not truncate or partially return an
+  over-bound basis; leave it unavailable until an owner contract for segmented
+  immutable records is approved.
   The attestation must be authenticated by the source owner's existing
   identity/trust mechanism, and the registry must not rewrite a bound entry.
   Refs must not be filesystem paths, credentials, or other secret locators;
   raw source contents stay with their owners. Producer/model and profile
   provenance remain in the bounded semantic result.
-- Resolve the manifest digest to its exact privately retained bytes and the
-  resolver record to each immutable source artifact under the requesting
-  consumer's authority. Consumers verify the manifest digest, owner attestation,
-  source digests, owner revision, and privacy/retention rules before using an
-  inference. The owner must keep the resolver record and source artifacts
-  available for the promised retention period, then report expiry explicitly.
+- Provide a lookup operation keyed by the exact manifest SHA-256. It verifies
+  the privately retained bytes and returns an owner-authenticated attestation
+  binding that digest to the complete sanitized source-entry set. Do not return
+  the raw path-bearing manifest in an ordinary resolver response. Provide a
+  separate permission-checked source fetch/resolve operation for each stable
+  `source_ref`. Consumers compare the attested digest to the event, then verify
+  source refs/digests, owner revision, and privacy/retention rules under their
+  own authority before using an inference. The owner must keep the resolver
+  record and source artifacts available for the promised retention period, then
+  report expiry explicitly.
 - If the manifest or any source is missing, expired, denied, or no longer
   matches its recorded owner revision, the consumer leaves the inference
   unused and reports the basis as unavailable/unknown. It must not reinterpret
@@ -110,9 +121,10 @@ The current v1 local preflight and this Auditctl implementation do not provide
 that registry, stable source refs, or retrieval check. Until the source owners
 adopt the contract and publish retrievable manifests, replay establishes only
 that the caller could qualify local source files at capture time. The source
-inventory must name the owner and existing resolver for every `source_id`; this
-Auditctl change does not identify that owner map. Auditctl does not archive or
-dereference source artifacts.
+inventory must name the owner, existing lookup/fetch API, manifest/index schema
+version, authentication mechanism, and retention policy for every `source_id`;
+this Auditctl change does not identify that owner map or deploy those
+operations. Auditctl does not archive or dereference source artifacts.
 
 The `interpretation_key` is a domain-separated digest over the case, exact
 source-basis reference and digest, work reference and revision, extraction
