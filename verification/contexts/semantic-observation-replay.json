@@ -88,6 +88,8 @@
   "bounds": {
     "source_manifest_bytes": 4194304,
     "source_records": 100000,
+    "owner_resolver_record_bytes": 4194304,
+    "owner_resolver_source_entries": 100000,
     "source_bytes": 536870912,
     "result_bytes": 65536,
     "statement_utf8_bytes": 512,
@@ -112,7 +114,8 @@
     "Semantic result uses non-canonical JSON bytes despite a matching caller hash.",
     "Output shard aliases a frozen source, manifest, or result file.",
     "New generation has no valid prior event reference.",
-    "Generic add attempts to bypass semantic-replay deduplication."
+    "Generic add attempts to bypass semantic-replay deduplication.",
+    "Owner resolver is missing, denied, expired, mutates a digest-bound entry, or exceeds its bounded complete-response limit."
   ],
   "oracles": [
     "Query the local ledger and assert one semantic event for the key.",
