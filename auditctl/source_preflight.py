@@ -194,6 +194,23 @@ def _read_frozen_source(source: dict[str, Any], manifest_path: Path) -> bytes:
     return raw
 
 
+def manifest_source_paths(manifest_path: Path, expected_manifest_sha256: str) -> tuple[Path, ...]:
+    """Return input paths after verifying the manifest's exact frozen digest.
+
+    This lets an output command refuse to append into one of its immutable input
+    shards. Source safety and content validation still belong to :func:`preflight`.
+    """
+    manifest_raw = _read_regular_file(manifest_path, _MAX_MANIFEST_BYTES)
+    manifest, _ = _load_manifest(manifest_raw, expected_manifest_sha256)
+    paths: list[Path] = []
+    for source in manifest["sources"]:
+        path = Path(source["path"])
+        if not path.is_absolute():
+            path = manifest_path.parent / path
+        paths.append(Path(os.path.abspath(path)))
+    return tuple(paths)
+
+
 def preflight(manifest_path: Path, expected_manifest_sha256: str) -> dict[str, Any]:
     """Verify explicitly bound source bytes and return a redacted comparison report."""
     manifest_raw = _read_regular_file(manifest_path, _MAX_MANIFEST_BYTES)
