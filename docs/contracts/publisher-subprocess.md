@@ -1,6 +1,6 @@
 ---
 doc_id: auditctl.publisher-subprocess
-contract_version: 3
+contract_version: 4
 status: adopted
 supersedes: null
 ---
@@ -34,6 +34,125 @@ The top-level audit actor identifies the process identity that published the
 observation. When a domain operation has a distinct actor, the publisher also
 records that domain actor in metadata. This preserves who invoked auditctl and
 who performed the source operation without conflating them.
+
+## Asynchronous semantic-observation replay
+
+An authorized evidence consumer may run after its source owner commits and
+invoke `auditctl semantic-replay` with an exact frozen source manifest and an
+out-of-process result. The consumer owns source authorization, model or
+deterministic extraction, durable attempt status, and retry scheduling. Auditctl
+does not fetch source material, call a model, schedule jobs, or create a queue.
+Unavailable, denied, timed-out, or failed attempts remain consumer operational
+status; they are not negative semantic observations.
+
+The manifest uses `auditctl-source-snapshot-manifest/v1` and is admitted only
+after source-preflight verifies its recorded byte counts and digests. The result
+uses `semantic-observation/v1`, is at most 64 KiB, and is accepted only when its
+canonical UTF-8 JSON bytes match the caller-supplied SHA-256. The admitted
+`semantic_result_sha256` is retained in the event metadata. The result contains
+a one-line statement of at most 512 UTF-8 bytes, a work reference and revision,
+producer/model or recipe provenance, extraction time, explicit generation and
+supersedes reference, and bounded usage/billing provenance. Unknown fields, raw
+prompts, transcripts, and unbounded output are rejected.
+The final semantic event still must fit Auditctl's existing 16 KiB canonical
+NDJSON line bound. If the complete envelope exceeds that limit, Auditctl
+rejects it without truncation or append.
+
+`source_basis_ref` is `artifact:sha256:<manifest SHA-256>` and
+`source_basis_sha256` is `sha256:<same manifest SHA-256>`. The immutable source
+manifest and its source files remain with their owners; Auditctl stores the
+bounded result and content-addressed basis reference, not a replacement copy of
+those artifacts. Replay refuses to append into a shard that aliases the
+manifest, result, or any frozen source file. Semantic results are ordinary
+`observation` records and cannot settle work or apply effects.
+
+The `artifact:sha256:` value is a content identifier, not a fetch URL. The
+`auditctl-source-snapshot-manifest/v1` used here is a local preflight input, not
+a portable owner archive: it contains filesystem `path` values and does not
+carry owner revisions, privacy classes, retention terms, or stable external
+source references. Auditctl does not copy those paths into event metadata. The
+event hash alone therefore does not make this basis retrievable by a later
+consumer. The manifest reader accepts up to 4 MiB, while the existing canonical
+NDJSON writer limits each event line to 16 KiB. Embedding the full manifest
+would exceed the record contract for valid source sets; a partial projection
+would not replace the hash-bound manifest and could disclose path values.
+
+Before an observation is treated as reusable outside the publishing
+environment, the owner of every source (or an already-authorized registry
+acting for all of them) must establish this retrieval contract. This uses the
+source owners' existing authority and retention policy; it does not authorize
+an Auditctl artifact store:
+
+- Retain the exact path-bearing v1 manifest privately and immutably under the
+  `artifact:sha256:<digest>` key named by the observation for at least the
+  associated evidence-retention period. Never replace different bytes under an
+  existing digest, and do not expose its filesystem paths in a resolver
+  response.
+- Publish an immutable, owner-attested resolver record keyed by that exact
+  manifest digest and `source_id`. Each entry supplies a stable,
+  permission-checked `source_ref`, owning source ID, owner revision, exact
+  content digest and digest domain, privacy class, and retention/expiry. Each
+  source entry carries its own `captured_at`; the complete record carries the
+  work reference/revision and a separate `snapshot_captured_at`. It is bounded
+  to 4 MiB and 100,000 source entries. Do not truncate or partially return an
+  over-bound basis; leave it unavailable until an owner contract for segmented
+  immutable records is approved.
+  The attestation must be authenticated by the source owner's existing
+  identity/trust mechanism, and the registry must not rewrite a bound entry.
+  Refs must not be filesystem paths, credentials, or other secret locators;
+  raw source contents stay with their owners. Producer/model and profile
+  provenance remain in the bounded semantic result.
+- Provide a lookup operation keyed by the exact manifest SHA-256. It verifies
+  the privately retained bytes and returns an owner-authenticated attestation
+  binding that digest to the complete sanitized source-entry set. Do not return
+  the raw path-bearing manifest in an ordinary resolver response. Provide a
+  separate permission-checked source fetch/resolve operation for each stable
+  `source_ref`. Consumers compare the attested digest to the event, then verify
+  source refs/digests, owner revision, and privacy/retention rules under their
+  own authority before using an inference. The owner must keep the resolver
+  record and source artifacts available for the promised retention period, then
+  report expiry explicitly.
+- If the manifest or any source is missing, expired, denied, or no longer
+  matches its recorded owner revision, the consumer leaves the inference
+  unused and reports the basis as unavailable/unknown. It must not reinterpret
+  that state as a negative finding.
+
+The current v1 local preflight and this Auditctl implementation do not provide
+that registry, stable source refs, or retrieval check. Until the source owners
+adopt the contract and publish retrievable manifests, replay establishes only
+that the caller could qualify local source files at capture time. The source
+inventory must name the owner, existing lookup/fetch API, manifest/index schema
+version, authentication mechanism, and retention policy for every `source_id`;
+this Auditctl change does not identify that owner map or deploy those
+operations. Auditctl does not archive or dereference source artifacts.
+
+The `interpretation_key` is a domain-separated digest over the case, exact
+source-basis reference and digest, work reference and revision, extraction
+kind, recipe digest, producer model, profile, and explicit analysis generation.
+Generation 1 has no `supersedes` reference. A later generation must reference
+an existing lower-generation semantic observation for the same case and work;
+it gets a distinct interpretation key while the previous observation remains
+unchanged.
+
+Within one local Auditctl ledger, replay checks the interpretation key under
+the existing SQLite `BEGIN IMMEDIATE` writer transaction before allocating an
+origin sequence. An exact same-key payload retry returns the original event ID
+and origin sequence and writes no second shard line. Reusing a key with changed
+content, or finding more than one existing event for it, is a conflict. These
+semantics apply only to callers using the same local ledger and writer path;
+they do not claim cross-ledger or central exactly-once processing.
+Generic `auditctl add` rejects the `semantic.observation` type and
+`semantic-consumer` source so a publisher cannot bypass these replay checks.
+
+The local write keeps the existing SQLite/NDJSON ordering and recovery rules.
+If the caller loses the local response after the NDJSON append, it retries with
+the same manifest and result bytes. Auditctl reconciles NDJSON-ahead state
+before the key lookup, then returns the original local event. For a lost
+central-ingest response, the consumer retries the original local envelope from
+NDJSON under the central observation-ingest contract; it does not mint a
+replacement event. A successful local response proves only that the local
+copies were written. It does not prove central receipt, model correctness, or
+work completion.
 
 ## Sprintctl mapping
 
@@ -322,6 +441,6 @@ is not shipped here; where it lives and how it is scheduled remain open.
 
 Adding an event type or changing required metadata is a versioned contract
 change. Version 2 adds `candidate.reviewed`. Version 3 adds `harness.baseline`
-and the `baseline:` typed ref prefix. Existing event types, typed refs, and the
-warn-only failure posture remain backward-compatible requirements from
-version 1.
+and the `baseline:` typed ref prefix. Version 4 adds the bounded semantic
+observation replay boundary. Existing event types, typed refs, and the warn-only
+failure posture remain backward-compatible requirements from version 1.

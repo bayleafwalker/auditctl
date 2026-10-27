@@ -1,0 +1,102 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "semantic-observation-replay",
+  "contract_ref": {
+    "doc_id": "auditctl.publisher-subprocess",
+    "revision": "4"
+  },
+  "implementation_sha": "2d369627ad8cfe310d83955b4bfabf75ac47eb12",
+  "depth": 2,
+  "environment": {
+    "backend": "SQLite 3.53.1 with temporary local NDJSON shards and frozen source files",
+    "isolation": "SQLite BEGIN IMMEDIATE; separate POSIX fork processes synchronize at a barrier; NDJSON uses the existing file lock",
+    "tool_versions": {
+      "python": "3.12.14",
+      "uv": "0.12.23",
+      "pytest": "9.1.1"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 1,
+    "bounds": {
+      "same_key_concurrent_processes": 2,
+      "source_records_per_fixture": 1,
+      "targeted_tests_passed": 150,
+      "targeted_test_files": 8
+    },
+    "faults_exercised": [
+      "two independent processes replaying the same interpretation_key",
+      "NDJSON append and fsync followed by a simulated lost local response before SQLite commit",
+      "same key with changed semantic result content",
+      "generation replay with a valid predecessor and with a missing or unknown predecessor",
+      "frozen source mutation and source-basis mismatch",
+      "destination shard aliasing a source, manifest, or result input",
+      "noncanonical result JSON with a matching supplied byte hash",
+      "generic add attempting to bypass semantic replay"
+    ]
+  },
+  "claims": [
+    {
+      "property": "One tested two-process same-key race produced one local semantic observation; both responses returned the same event ID and origin sequence.",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/test_semantic.py::test_semantic_replay_serializes_two_independent_processes_for_one_key",
+        "The test uses separate processes and a deterministic barrier, then queries the local ledger."
+      ]
+    },
+    {
+      "property": "An exact retry after an NDJSON-ahead write reconciled the event before key lookup and did not append a second observation.",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_semantic.py::test_semantic_replay_recovers_after_ndjson_append_with_lost_local_response",
+        "The fault hook raises after the existing append/fsync call and before SQLite commit; the retry returns the original sequence."
+      ]
+    },
+    {
+      "property": "Accepted observations retain the canonical result digest and frozen source-basis identity; replay refuses changed or aliased input files.",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_semantic.py::test_semantic_event_rechecks_the_persisted_exact_result_digest",
+        "tests/test_semantic.py::test_semantic_replay_records_a_source_bound_observation_and_keeps_basis_bytes",
+        "tests/test_semantic.py::test_semantic_replay_does_not_append_to_a_source_shard",
+        "tests/test_semantic.py::test_semantic_replay_does_not_append_to_manifest_or_result_input"
+      ]
+    },
+    {
+      "property": "The same key with changed content is refused, and a later generation requires a lower-generation observation for the same case and work.",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_semantic.py::test_semantic_replay_rejects_same_key_with_changed_content",
+        "tests/test_semantic.py::test_semantic_replay_new_generation_links_a_prior_observation",
+        "tests/test_semantic.py::test_semantic_replay_requires_and_checks_generation_predecessor"
+      ]
+    },
+    {
+      "property": "The existing local dual-write, failure, rebuild, source-preflight, CLI, and publisher contract checks pass with the replay change.",
+      "result": "example-tested",
+      "evidence": [
+        "150 tests passed across tests/test_semantic.py, tests/test_source_preflight.py, tests/test_dual_write.py, tests/test_rebuild.py, tests/test_rebuild_provenance.py, tests/test_rebuild_decode_errors.py, tests/test_publisher_contract.py, and tests/test_cli.py.",
+        "git diff --check passed.",
+        "python /workspace/agentops/scripts/validate_verification_artifacts.py --root /workspace/auditctl passed for all packets and dispatch metadata."
+      ]
+    },
+    {
+      "property": "Owner artifact resolution and retention, durable consumer scheduling, actual model enrichment, independent consumer reuse, and central lost-response receipt replay are not established by this local implementation.",
+      "result": "unknown",
+      "evidence": [
+        "The workspace provides no owner artifact registry or resolver to verify later retrieval of source_basis_ref.",
+        "The current source manifest v1 contains local filesystem paths and lacks owner revision, privacy class, retention, and stable external source_ref fields.",
+        "The source manifest bound is 4 MiB while the existing NDJSON line bound is 16 KiB, so embedding the full manifest would violate the record contract for valid inputs.",
+        "No source inventory identified the owner, lookup/fetch API, schema version, authentication mechanism, or retention policy for the fixture sources.",
+        "No model, owner outbox/scheduler, central database, or central service was invoked."
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "All writes and fault injections used pytest temporary repositories and artifact roots; no live or shared audit data was opened or changed.",
+    "The concurrency result covers one two-process local SQLite/NDJSON history and does not claim cross-ledger or central exactly-once processing.",
+    "artifact:sha256:<manifest digest> is a content identifier. Reuse requires source owners to retain the exact v1 bytes privately and expose an immutable, authenticated, complete resolver record bounded to 4 MiB and 100,000 entries, with stable refs, owner revisions, digests/digest domains, per-source capture times, snapshot/work revisions, privacy classes, and retention/expiry. The lookup/fetch API and source-owner map are not identified, implemented, or verified here."
+  ]
+}

@@ -830,7 +830,7 @@ def test_harness_baseline_contract_freezes_mapping_and_window_semantics() -> Non
     assert "`harness.baseline`" in contract
     assert "harness-baseline" in contract
     assert "baseline:<baseline_hash>" in contract
-    assert "contract_version: 3" in contract
+    assert "contract_version: 4" in contract
     assert "Version 3 adds `harness.baseline`" in normalized
     # The window semantics are the load-bearing part of this mapping: silence
     # asserts the previous baseline, so both trust properties must stay frozen.
@@ -848,6 +848,46 @@ def test_harness_baseline_contract_freezes_mapping_and_window_semantics() -> Non
         "`event_type=harness-baseline`",
     ):
         assert field in contract
+
+
+def test_semantic_replay_contract_freezes_local_retry_and_authority_boundary() -> None:
+    contract = (ROOT / "docs/contracts/publisher-subprocess.md").read_text(encoding="utf-8")
+    normalized = " ".join(contract.split())
+
+    assert "contract_version: 4" in contract
+    assert "`auditctl semantic-replay`" in contract
+    assert "`semantic-consumer` source so a publisher cannot bypass these replay checks" in normalized
+    assert "source authorization, model or deterministic extraction" in normalized
+    assert "does not fetch source material, call a model, schedule jobs, or create a queue" in normalized
+    assert "semantic-observation/v1" in contract
+    assert "canonical UTF-8 JSON bytes match the caller-supplied SHA-256" in normalized
+    assert "final semantic event still must fit Auditctl's existing 16 KiB canonical NDJSON line bound" in normalized
+    assert "`semantic_result_sha256` is retained in the event metadata" in normalized
+    assert "content identifier, not a fetch URL" in normalized
+    assert "owner of every source (or an already-authorized registry acting for all of them)" in normalized
+    assert "Retain the exact path-bearing v1 manifest privately and immutably" in normalized
+    assert "local preflight input, not a portable owner archive" in normalized
+    assert "4 MiB" in normalized
+    assert "16 KiB" in normalized
+    assert "owner revisions, privacy classes, retention terms, or stable external source references" in normalized
+    assert "immutable, owner-attested resolver record keyed by that exact manifest digest and `source_id`" in normalized
+    assert "stable, permission-checked `source_ref`, owning source ID, owner revision" in normalized
+    assert "privacy class, and retention/expiry" in normalized
+    assert "Each source entry carries its own `captured_at`" in normalized
+    assert "separate `snapshot_captured_at`" in normalized
+    assert "bounded to 4 MiB and 100,000 source entries" in normalized
+    assert "Do not truncate or partially return an over-bound basis" in normalized
+    assert "must not be filesystem paths, credentials, or other secret locators" in normalized
+    assert "authenticated by the source owner's existing identity/trust mechanism" in normalized
+    assert "lookup operation keyed by the exact manifest SHA-256" in normalized
+    assert "separate permission-checked source fetch/resolve operation for each stable `source_ref`" in normalized
+    assert "leaves the inference unused and reports the basis as unavailable/unknown" in normalized
+    assert "source inventory must name the owner, existing lookup/fetch API, manifest/index schema version" in normalized
+    assert "this Auditctl change does not identify that owner map" in normalized
+    assert "Generation 1 has no `supersedes` reference" in contract
+    assert "An exact same-key payload retry returns the original event ID and origin sequence" in normalized
+    assert "same manifest and result bytes" in normalized
+    assert "does not prove central receipt, model correctness, or work completion" in normalized
 
 
 def test_harness_baseline_first_observation_argv_emits_a_valid_shard_observation(

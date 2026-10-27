@@ -1,0 +1,65 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "semantic-observation-add-baseline",
+  "owner_repo": "auditctl",
+  "subject": "Baseline behavior when a semantic result is retried through generic add",
+  "contract_ref": {
+    "doc_id": "auditctl.publisher-subprocess",
+    "revision": "3"
+  },
+  "source_of_truth": "Temporary repository-local SQLite index and NDJSON shard written by the merged Auditctl add command.",
+  "depth": 0,
+  "backends": [
+    "SQLite",
+    "NDJSON local files"
+  ],
+  "actors": [
+    "semantic-consumer publisher"
+  ],
+  "initial_state": [
+    "Isolated temporary repository with an empty Auditctl ledger.",
+    "No existing event has the semantic observation interpretation key."
+  ],
+  "operations": [
+    {
+      "name": "submit identical semantic event twice through generic add",
+      "actors": [
+        "semantic-consumer publisher"
+      ],
+      "parameters": {
+        "event_type": "semantic.observation",
+        "source": "semantic-consumer",
+        "payload": "same summary, refs, metadata, key, and timestamp"
+      }
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "generic add is not idempotent by semantic key and returns a newly minted event identity for each invocation"
+  },
+  "assumptions": {
+    "isolation": "Each generic add allocates a new Auditctl event ID; no semantic-key check exists in the merged base implementation.",
+    "clock": "A fixed timestamp is supplied so only generated event identity differs.",
+    "fairness": "Not applicable to the sequential baseline."
+  },
+  "bounds": {
+    "replays": 2,
+    "repo_scope": "temporary isolated fixture"
+  },
+  "invariants": [
+    "The reproduction touches only the temporary fixture, never shared or production artifacts.",
+    "The observed duplicate comes from repeated generic add calls; no exactly-once guarantee is attributed to that command."
+  ],
+  "faults": [
+    "Repeat an identical event payload with the same semantic interpretation key."
+  ],
+  "oracles": [
+    "Compare the returned event IDs from both invocations.",
+    "Query the temporary ledger and count semantic.observation rows."
+  ],
+  "implementation_anchors": [
+    "auditctl/cli.py:add_cmd",
+    "auditctl/validation.py:with_observation_envelope",
+    "auditctl/db.py:insert_event"
+  ]
+}

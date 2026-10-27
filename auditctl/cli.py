@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -15,6 +17,8 @@ from .paths import resolve_audit_context, resolve_paths, shard_path
 from .render import render_text
 from .validation import (
     canonical_json,
+    canonical_payload_json,
+    observation_payload,
     parse_metadata,
     validate_event_object,
     validate_refs,
@@ -77,52 +81,79 @@ def source_preflight_cmd(manifest_path: Path, manifest_sha256: str) -> None:
     click.echo(json.dumps(report, sort_keys=True, ensure_ascii=False, allow_nan=False))
 
 
-@cli.command("add")
-@click.option("--type", "type_", required=True, help="Audit event type")
-@click.option("--actor", required=True, help="Actor responsible for the event")
-@click.option("--summary", required=True, help="One-line event summary")
-@click.option("--detail", default=None, help="Optional Markdown detail")
-@click.option("--ref", "refs", multiple=True, help="Reference such as sha:<hash> or wi:<id>")
-@click.option("--source", default="manual", show_default=True, help="Publisher source")
-@click.option("--metadata", default=None, help="JSON object with publisher metadata")
-@click.option("--ts", default=None, help="ISO UTC timestamp ending in Z")
-@click.option("--json", "output_json", is_flag=True, default=False, help="Emit JSON")
-def add_cmd(type_, actor, summary, detail, refs, source, metadata, ts, output_json) -> None:
-    """Add one audit event to sqlite and today's NDJSON shard."""
-    try:
-        # One resolution, consumed. Do not reintroduce a separately-resolved root here:
-        # that split is what misrouted 13 events on 2026-08-29.
-        context = resolve_audit_context()
-        published_from = Path.cwd()
-        timestamp = validate_timestamp(ts or _now())
-        created_at = _now()
-        event = validate_event_object(
-            {
-                "id": new_event_id(),
-                "ts": timestamp,
-                "type": type_,
-                "actor": actor,
-                "summary": summary,
-                "detail": detail,
-                "refs": validate_refs(list(refs)),
-                "source": source,
-                "metadata": parse_metadata(metadata),
-                "created_at": created_at,
-                # The resolver's account of this write, not the publisher's. A caller
-                # cannot supply or suppress it; that is the point of recording it here
-                # rather than leaving it to publishers and their metadata dictionaries.
-                "resolved_context": context.as_record(published_from),
-            }
-        )
-        ndjson_path = context.shard_for(timestamp)
-        conn = db.connect(context.index_path)
-        db.init_db(conn)
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
+def _record_event(
+    event: dict,
+    *,
+    interpretation_key: str | None = None,
+    immutable_input_paths: tuple[Path, ...] = (),
+) -> tuple[dict, object, Path, bool]:
+    """Append with the existing local writer, optionally deduping semantic replay."""
+    context = resolve_audit_context()
+    event = {
+        **event,
+        "id": new_event_id(),
+        "created_at": _now(),
+        "resolved_context": context.as_record(Path.cwd()),
+    }
+    event = validate_event_object(event)
+    ndjson_path = context.shard_for(event["ts"])
 
+    for input_path in immutable_input_paths:
+        try:
+            aliases_output = os.path.samefile(ndjson_path, input_path)
+        except OSError:
+            aliases_output = False
+        if aliases_output or os.path.normcase(os.path.realpath(ndjson_path)) == os.path.normcase(
+            os.path.realpath(input_path)
+        ):
+            raise ValueError("replay destination shard aliases an immutable replay input")
+
+    conn = db.connect(context.index_path)
+    db.init_db(conn)
     try:
         _reconcile_shards_before_allocation(conn, ndjson_path.parent)
         conn.execute("BEGIN IMMEDIATE")
+        if interpretation_key is not None:
+            semantic = event["metadata"]["semantic_observation"]
+            supersedes = semantic["supersedes"]
+            if supersedes is not None:
+                prior = db.find_semantic_observation_by_id(conn, supersedes)
+                prior_metadata = prior.get("metadata") if prior is not None else None
+                prior_semantic = (
+                    prior_metadata.get("semantic_observation")
+                    if isinstance(prior_metadata, dict)
+                    else None
+                )
+                if (
+                    not isinstance(prior_semantic, dict)
+                    or prior_semantic.get("case_id") != semantic["case_id"]
+                    or prior_semantic.get("work_ref") != semantic["work_ref"]
+                    or type(prior_semantic.get("analysis_generation")) is not int
+                    or prior_semantic["analysis_generation"] >= semantic["analysis_generation"]
+                ):
+                    raise click.ClickException(
+                        "supersedes_conflict: prior event must be a lower-generation observation for the same case and work"
+                    )
+            matches = db.find_semantic_observations_by_key(conn, interpretation_key)
+            if matches:
+                conn.rollback()
+                if len(matches) != 1:
+                    raise click.ClickException(
+                        "interpretation_key_conflict: multiple local observations already use this key"
+                    )
+                existing = matches[0]
+                candidate_digest = hashlib.sha256(
+                    canonical_payload_json(observation_payload(event)).encode("utf-8")
+                ).hexdigest()
+                existing_digest = hashlib.sha256(
+                    canonical_payload_json(observation_payload(existing)).encode("utf-8")
+                ).hexdigest()
+                if existing_digest != candidate_digest:
+                    raise click.ClickException(
+                        "interpretation_key_conflict: key already has different content; use a new analysis_generation"
+                    )
+                return existing, context, context.shard_for(existing["ts"]), True
+
         origin_stream_id, origin_seq = db.allocate_origin(conn)
         event = validate_event_object(
             with_observation_envelope(
@@ -151,12 +182,47 @@ def add_cmd(type_, actor, summary, detail, refs, source, metadata, ts, output_js
                 err=True,
             )
             raise click.ClickException(str(exc)) from exc
+        return event, context, ndjson_path, False
     except click.ClickException:
         raise
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
     finally:
         conn.close()
+
+
+@cli.command("add")
+@click.option("--type", "type_", required=True, help="Audit event type")
+@click.option("--actor", required=True, help="Actor responsible for the event")
+@click.option("--summary", required=True, help="One-line event summary")
+@click.option("--detail", default=None, help="Optional Markdown detail")
+@click.option("--ref", "refs", multiple=True, help="Reference such as sha:<hash> or wi:<id>")
+@click.option("--source", default="manual", show_default=True, help="Publisher source")
+@click.option("--metadata", default=None, help="JSON object with publisher metadata")
+@click.option("--ts", default=None, help="ISO UTC timestamp ending in Z")
+@click.option("--json", "output_json", is_flag=True, default=False, help="Emit JSON")
+def add_cmd(type_, actor, summary, detail, refs, source, metadata, ts, output_json) -> None:
+    """Add one audit event to sqlite and today's NDJSON shard."""
+    if type_ == "semantic.observation" or source == "semantic-consumer":
+        raise click.ClickException("semantic.observation must use semantic-replay")
+    try:
+        timestamp = validate_timestamp(ts or _now())
+        event = {
+            "ts": timestamp,
+            "type": type_,
+            "actor": actor,
+            "summary": summary,
+            "detail": detail,
+            "refs": validate_refs(list(refs)),
+            "source": source,
+            "metadata": parse_metadata(metadata),
+        }
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    try:
+        event, context, ndjson_path, _duplicate = _record_event(event)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     if output_json:
         click.echo(
@@ -178,6 +244,75 @@ def add_cmd(type_, actor, summary, detail, refs, source, metadata, ts, output_js
         )
     else:
         click.echo(f"Added {event['id']} {event['type']} {event['source']} {event['ts']}")
+
+
+@cli.command("semantic-replay")
+@click.option(
+    "--manifest",
+    "manifest_path",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    required=True,
+    help="Frozen Auditctl source snapshot manifest",
+)
+@click.option(
+    "--manifest-sha256",
+    required=True,
+    help="Externally recorded lowercase SHA-256 of the exact manifest bytes",
+)
+@click.option(
+    "--result",
+    "result_path",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    required=True,
+    help="Precomputed semantic-observation/v1 result from an out-of-process consumer",
+)
+@click.option(
+    "--result-sha256",
+    required=True,
+    help="Externally recorded lowercase SHA-256 of the exact result bytes",
+)
+def semantic_replay_cmd(
+    manifest_path: Path, manifest_sha256: str, result_path: Path, result_sha256: str
+) -> None:
+    """Verify and append one asynchronous semantic result against frozen sources."""
+    from .semantic import build_event, interpretation_key, read_result, validate_result
+    from .source_preflight import manifest_source_paths, preflight
+
+    try:
+        basis = preflight(manifest_path, manifest_sha256)
+        source_paths = manifest_source_paths(manifest_path, manifest_sha256)
+        result, actual_result_sha256 = read_result(result_path, result_sha256)
+        result = validate_result(result, basis["manifest_sha256"])
+        key = interpretation_key(result)
+        event, context, ndjson_path, duplicate = _record_event(
+            build_event(result, actual_result_sha256),
+            interpretation_key=key,
+            immutable_input_paths=(manifest_path, result_path, *source_paths),
+        )
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(
+        json.dumps(
+            {
+                "event_id": event["event_id"],
+                "origin_stream_id": event["origin_stream_id"],
+                "origin_seq": event["origin_seq"],
+                "interpretation_key": key,
+                "source_basis_ref": result["source_basis_ref"],
+                "source_basis_sha256": result["source_basis_sha256"],
+                "source_manifest_sha256": basis["manifest_sha256"],
+                "result_sha256": actual_result_sha256,
+                "basis_qualification": basis["qualification"],
+                "duplicate": duplicate,
+                "ndjson_path": str(ndjson_path),
+                "repo_id": context.repo_id,
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    )
 
 
 @cli.command("list")

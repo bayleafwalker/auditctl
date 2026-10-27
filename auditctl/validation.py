@@ -380,6 +380,10 @@ def validate_event_object(event: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{key} must be a non-empty string")
     if event.get("detail") is not None and not isinstance(event["detail"], str):
         raise ValueError("detail must be a string or null")
+    if event["type"] == "semantic.observation" or event["source"] == "semantic-consumer":
+        from .semantic import validate_semantic_event
+
+        validate_semantic_event(event)
     validate_resolved_context(event)
     present_envelope_fields = ENVELOPE_FIELDS & set(event)
     if present_envelope_fields:
