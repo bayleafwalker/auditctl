@@ -58,8 +58,9 @@ through the current record contract. Proposed bounded fields:
 ```yaml
 semantic_observation:
   schema_version: semantic-observation/v1  # candidate; not deployed API
-  source_ref: immutable-reference
-  source_digest: sha256:...
+  source_basis_ref: immutable-manifest-reference
+  source_basis_sha256: sha256:...
+  interpretation_key: sha256:...
   work_ref: wi:...
   observed_work_revision: 42
   statement: compatibility-risk-detected
@@ -68,8 +69,18 @@ semantic_observation:
   prompt_or_recipe_digest: sha256:...
   extracted_at: timestamp
   supersedes: null                 # optional previous inference ref
-  source_freshness: until-inputs-change
+  applicability: exact-basis-and-work-revision
 ```
+
+Freeze inputs in a resolvable source-basis manifest, not a single source
+pointer. The manifest lists every source owner and immutable reference, the
+digest of the original stored bytes and its digest domain, capture time,
+privacy/retention class, and the applicable work revision. Hash the exact
+frozen manifest bytes for `source_basis_sha256`; a digest without a permitted
+reference to the source is insufficient. Keep original artifacts with their
+source owners. Auditctl stores the bounded finding and basis reference; it
+does not become an artifact store or recanonicalize historical bytes to make a
+new digest.
 
 Transport-specific shapes must be reconciled with EC-00 TypeSpec/OpenAPI and
 the S4 work-evidence owner. This proposal does not introduce a third
@@ -97,17 +108,50 @@ research/operational analysis. Record chosen provider, exact model revision,
 profile, usage/billing provenance, retry and case identity. No implicit
 provider failover or unauthorized outbound content.
 
-**Acceptance:** each consumer can challenge the inferred statement with
-source bytes, stale source digests invalidate the current interpretation,
-duplicate ingestion does not multiply observations, and missing models never
-prevent already-authorized work completion. Stop if consumers rarely reuse
-the projection or it loses critical evidence/costs more than repeated reads.
+The `interpretation_key` identifies one analysis intent: case ID, source-basis
+reference and digest, work reference and revision, extraction method, recipe
+digest, requested model/profile, and an explicit analysis generation. Exact
+retries reuse that key; changing the basis or analysis configuration, or
+deliberately requesting a fresh analysis, creates a new key and a new immutable
+observation linked by `supersedes`. The key is a semantic deduplication aid;
+Auditctl still mints its own event and producer identities.
+
+Run enrichment only after the source owner commits. It cannot delay or change
+that source operation. The consumer's existing runner/outbox owns durable
+per-key claims and attempt status; failed, timed-out, unavailable, or denied
+attempts remain operational status, not negative semantic observations. If no
+existing owner mechanism can safely schedule and reconcile the work, keep this
+packet at offline replay until one is identified; do not add a queue or job
+database to Auditctl or Agentops. An unavailable source/model result stays
+`unknown` or `unavailable`, never `no finding`.
+
+The current publisher contract makes each `auditctl add` invocation a new
+event, so the consumer must reconcile `interpretation_key` before retrying an
+ambiguous local publish and must serialize simultaneous attempts for the same
+key through its owner-side claim. For a lost central-ingest response, retry the
+same original local envelope from NDJSON so the central receipt contract can
+return the existing receipt; do not mint a replacement event. A changed basis
+leaves the old finding inspectable, while a consumer must reject it for any
+assessment whose current source-basis digest or work revision differs.
+
+**Acceptance:** both consumers can resolve and challenge one finding against
+all source bytes in its frozen basis manifest. Replay the same key and race
+two deliveries for it: only one semantic observation results. Inject a lost
+local publisher response and a lost central response; reconciliation must
+avoid a second local observation and reuse the original central receipt.
+Changing the source manifest or analysis generation yields a distinct linked
+observation, and consumers ignore stale basis/revision matches. Missing,
+denied, or unavailable models never prevent already-authorized work
+completion. Stop if consumers rarely reuse the projection or it loses
+critical evidence/costs more than repeated reads.
 
 ### AU-SE4 — Qualification, S4 handover and rollback
 
 - Inject missing Auditctl binary, nonzero subprocess, timeout, duplicate
-  caller retry, NDJSON-ahead recovery, lost HTTP response, origin sequence gap,
-  provider outage, source revision change and independent finding disagreement.
+  caller retry, same-key concurrent delivery, ambiguous local publish response,
+  NDJSON-ahead recovery, lost HTTP response, origin sequence gap, provider
+  outage, denied source, source revision change and independent finding
+  disagreement.
 - Preserve original producer `event_id`, source `payload_sha256`, existing
   central record digest and commit/shard provenance. Do not recalculate a
   historical digest under the new envelope.
