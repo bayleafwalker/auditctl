@@ -126,6 +126,11 @@ def validate_timestamp(value: str) -> str:
     return value
 
 
+def parse_timestamp(value: str) -> datetime:
+    """Parse a validated UTC timestamp, including optional fractional seconds."""
+    return datetime.fromisoformat(validate_timestamp(value)[:-1] + "+00:00")
+
+
 def validate_event_id(value: str) -> str:
     if not EVENT_ID_RE.match(value):
         raise ValueError(f"invalid audit event id: {value}")

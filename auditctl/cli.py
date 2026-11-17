@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import shlex
 import shutil
 from difflib import get_close_matches
 from datetime import datetime, timedelta, timezone
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import click
 
-from . import db
+from . import __version__, db
 from .ids import new_event_id
 from .ndjson import ImportInputError, append_event, read_events, resolve_inputs
 from .paths import resolve_audit_context, resolve_paths, shard_path
@@ -19,6 +20,7 @@ from .validation import (
     canonical_json,
     canonical_payload_json,
     observation_payload,
+    parse_timestamp,
     parse_metadata,
     validate_event_object,
     validate_refs,
@@ -110,6 +112,15 @@ class AuditGroup(click.Group):
             if rows:
                 with formatter.section(heading):
                     formatter.write_dl(rows, col_max=width)
+        listed = {name for _, names in self.sections for name in names}
+        other_rows = [
+            (name, commands[name].get_short_help_str())
+            for name in commands
+            if name not in listed and commands[name] is not None
+        ]
+        if other_rows:
+            with formatter.section("Other"):
+                formatter.write_dl(other_rows, col_max=width)
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         super().format_help(ctx, formatter)
@@ -138,7 +149,7 @@ class AuditGroup(click.Group):
     no_args_is_help=False,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
-@click.version_option(version="0.1.9", prog_name="auditctl")
+@click.version_option(version=__version__, prog_name="auditctl")
 def cli() -> None:
     """Repo-local audit ledger for this repository."""
     if click.get_current_context().invoked_subcommand is None:
@@ -151,39 +162,61 @@ def status_cmd(output_json: bool) -> None:
     """Show the resolved ledger, recent activity and next commands."""
     try:
         context = resolve_audit_context()
-        conn = db.connect(context.index_path)
-        db.init_db(conn)
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     now = datetime.now(timezone.utc)
-    now_text = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    since_24h = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    since_7d = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    try:
-        counts = conn.execute(
-            """SELECT type,
-                      SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS last_24h,
-                      SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS last_7d
-               FROM audit_event GROUP BY type ORDER BY type""",
-            (since_24h, since_7d),
-        ).fetchall()
-        total = int(conn.execute("SELECT COUNT(*) FROM audit_event").fetchone()[0])
-        newest = conn.execute("SELECT MAX(ts) FROM audit_event").fetchone()[0]
-    finally:
-        conn.close()
+    # A status read must not create the ledger or its parent directory.
+    ledger_exists = context.index_path.exists()
+    if ledger_exists:
+        try:
+            conn = db.connect(context.index_path)
+            try:
+                counts = conn.execute(
+                    """SELECT type,
+                              SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS last_24h,
+                              SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS last_7d
+                       FROM audit_event GROUP BY type ORDER BY type""",
+                    (
+                        (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    ),
+                ).fetchall()
+                total = int(conn.execute("SELECT COUNT(*) FROM audit_event").fetchone()[0])
+                newest = conn.execute("SELECT MAX(ts) FROM audit_event").fetchone()[0]
+            finally:
+                conn.close()
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+    else:
+        counts, total, newest = [], 0, None
 
+    now_text = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     shard_dir = context.artifacts_root / "_artifacts" / context.repo_id / "audit"
     shard_files = sorted(shard_dir.glob("events-*.ndjson")) if shard_dir.exists() else []
     shard_bytes = sum(path.stat().st_size for path in shard_files)
     shard_count: int | None = None
     if shard_bytes <= 8 * 1024 * 1024:
         try:
-            shard_count = sum(
-                sum(1 for _ in path.open("rb")) for path in shard_files
-            )
+            shard_count = 0
+            for path in shard_files:
+                with path.open("rb") as shard:
+                    shard_count += sum(1 for _ in shard)
         except OSError:
             shard_count = None
+
+    rebuild = f"auditctl rebuild --from-ndjson {shlex.quote(str(shard_dir))} --dry-run"
+    needs: list[str] = []
+    if shard_count is not None and shard_count != total:
+        if ledger_exists:
+            needs.append(f"ledger drift: sqlite={total}, shards={shard_count}")
+        else:
+            needs.append(f"no sqlite index for {shard_count} shard event(s)")
+        next_steps = [rebuild]
+    elif not ledger_exists:
+        next_steps = ["auditctl add --help"]
+    else:
+        next_steps = ["auditctl list --limit 10", "auditctl add --help"]
 
     if output_json:
         payload = {
@@ -192,9 +225,11 @@ def status_cmd(output_json: bool) -> None:
                 "repo_id": context.repo_id,
                 "repo_root": str(context.repo_root),
                 "ledger_path": str(context.index_path),
+                "ledger_exists": ledger_exists,
                 "artifacts_root": str(context.artifacts_root),
                 "resolution": context.resolution_source,
             },
+            "needs_you": needs,
             "counts": {
                 "last_24h": {row["type"]: row["last_24h"] for row in counts},
                 "last_7d": {row["type"]: row["last_7d"] for row in counts},
@@ -202,17 +237,7 @@ def status_cmd(output_json: bool) -> None:
             "newest_event": (
                 {
                     "ts": newest,
-                    "age_seconds": max(
-                        0,
-                        int(
-                            (
-                                now
-                                - datetime.strptime(newest, "%Y-%m-%dT%H:%M:%SZ").replace(
-                                    tzinfo=timezone.utc
-                                )
-                            ).total_seconds()
-                        ),
-                    ),
+                    "age_seconds": max(0, int((now - parse_timestamp(newest)).total_seconds())),
                 }
                 if newest
                 else None
@@ -228,14 +253,23 @@ def status_cmd(output_json: bool) -> None:
                 ),
             },
             "generated_at": now_text,
-            "next": ["auditctl list --limit 10", "auditctl add --help"],
+            "next": next_steps,
         }
         click.echo(json.dumps(payload, sort_keys=True))
         return
 
-    paths = resolve_paths()
-    click.echo(_context_description(paths))
-    click.echo("Nothing needs you.")
+    click.echo(
+        f"context: repo {context.repo_id} · ledger {context.index_path} · "
+        f"resolved via {context.resolution_source}"
+    )
+    if needs:
+        click.echo(f"▲ needs you ({len(needs)})")
+        for item in needs:
+            click.echo(f"  ▲ {item}")
+    elif not ledger_exists:
+        click.echo("No ledger yet.")
+    else:
+        click.echo("Nothing needs you.")
     click.echo("In flight: none")
     if counts:
         click.echo("events by type (24h / 7d):")
@@ -245,21 +279,18 @@ def status_cmd(output_json: bool) -> None:
     else:
         click.echo("events by type (24h / 7d): none")
     if newest:
-        newest_age = (
-            now
-            - datetime.strptime(newest, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-        ).total_seconds()
+        newest_age = (now - parse_timestamp(newest)).total_seconds()
         click.echo(f"newest event: {_relative_age(newest_age)} ({newest})")
     else:
         click.echo("newest event: none")
     if shard_count is None:
-        click.echo(f"shard/sqlite: check skipped ({len(shard_files)} shard(s), {shard_bytes} bytes)")
+        click.echo(f"◌ shard/sqlite: check skipped ({len(shard_files)} shard(s), {shard_bytes} bytes)")
     else:
         state = "matched" if shard_count == total else f"drift: sqlite={total}, shards={shard_count}"
         click.echo(f"shard/sqlite line count: {state}")
     click.echo(f"events: {total}")
-    click.echo("next: auditctl list --limit 10")
-    click.echo("next: auditctl add --help")
+    for step in next_steps:
+        click.echo(f"next: {step}")
 
 
 @cli.command("source-preflight", short_help="Qualify a frozen source manifest")
@@ -566,8 +597,13 @@ def list_cmd(type_, source, since, until, limit, output_json, attribution_overla
         paths, conn = _open_db()
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
+    type_exists = None
     try:
         events = db.query_events(conn, type_=type_, source=source, since=since, until=until, limit=limit)
+        if type_ is not None:
+            type_exists = conn.execute(
+                "SELECT 1 FROM audit_event WHERE type = ? LIMIT 1", (type_,)
+            ).fetchone()
     finally:
         conn.close()
     if output_json:
@@ -576,9 +612,10 @@ def list_cmd(type_, source, since, until, limit, output_json, attribution_overla
     click.echo(_context_description(paths))
     if not events:
         if type_ is not None:
-            raise AuditNotFound(
-                f"no audit events found for type {type_!r}; run `auditctl status` to see recent types"
-            )
+            if type_exists is None:
+                raise AuditNotFound(
+                    f"no audit events found for type {type_!r}; run `auditctl status` to see recent types"
+                )
         click.echo("No audit events found.")
         return
     type_width = max(len("TYPE"), *(len(str(event["type"])) for event in events))

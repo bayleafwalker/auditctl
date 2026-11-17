@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -135,6 +136,92 @@ def test_status_reports_counts_newest_and_drift(repo_root: Path) -> None:
     assert payload["counts"]["last_7d"]["workflow.session.completed"] == 1
 
 
+def test_status_accepts_fractional_event_timestamps(repo_root: Path) -> None:
+    runner = CliRunner()
+    added = runner.invoke(
+        cli,
+        ["add", "--type", "decision", "--actor", "tester", "--summary", "Fractional",
+         "--ts", "2026-11-17T18:40:21.500Z"],
+    )
+    assert added.exit_code == 0, added.output
+    for args in (["status"], ["status", "--json"]):
+        result = runner.invoke(cli, args)
+        assert result.exit_code == 0, result.output
+        assert "Traceback" not in result.output
+
+
+def test_status_without_ledger_is_read_only(repo_root: Path, monkeypatch) -> None:
+    monkeypatch.delenv("AUDITCTL_DB", raising=False)
+    monkeypatch.delenv("AUDITCTL_ARTIFACTS_ROOT", raising=False)
+    for args in (["status"], ["status", "--json"]):
+        result = CliRunner().invoke(cli, args)
+        assert result.exit_code == 0, result.output
+        assert not (repo_root / ".auditctl").exists()
+        if args[-1] == "--json":
+            payload = json.loads(result.output)
+            assert payload["counts"] == {"last_24h": {}, "last_7d": {}}
+            assert payload["drift"]["sqlite_events"] == 0
+        else:
+            assert "No ledger yet." in result.output
+            assert "next: auditctl add --help" in result.output
+
+
+def test_list_known_type_without_matching_range_is_empty_success(repo_root: Path) -> None:
+    runner = CliRunner()
+    added = runner.invoke(
+        cli, ["add", "--type", "decision", "--actor", "tester", "--summary", "Earlier"]
+    )
+    assert added.exit_code == 0, added.output
+    result = runner.invoke(
+        cli, ["list", "--type", "decision", "--since", "2030-01-01T00:00:00Z"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "No audit events found." in result.output
+    assert runner.invoke(
+        cli, ["list", "--type", "decision", "--since", "2030-01-01T00:00:00Z", "--json"]
+    ).output == "[]\n"
+
+
+def test_status_surfaces_drift_as_needs_you(repo_root: Path) -> None:
+    runner = CliRunner()
+    added = runner.invoke(
+        cli, ["add", "--type", "decision", "--actor", "tester", "--summary", "Drift"]
+    )
+    assert added.exit_code == 0, added.output
+    shard = next((repo_root / "_artifacts" / repo_root.name / "audit").glob("events-*.ndjson"))
+    shard.write_text("", encoding="utf-8")
+    result = runner.invoke(cli, ["status"])
+    assert result.exit_code == 0, result.output
+    assert "▲ needs you (1)" in result.output
+    assert "▲ ledger drift: sqlite=1, shards=0" in result.output
+    assert "next: auditctl rebuild --from-ndjson " in result.output
+    assert result.output.rstrip().endswith("--dry-run")
+    assert "Nothing needs you." not in result.output
+
+
+def test_help_lists_unsectioned_commands_under_other() -> None:
+    from auditctl.cli import AuditGroup
+
+    original = AuditGroup.sections
+    AuditGroup.sections = tuple((heading, tuple(name for name in names if name != "render"))
+                                for heading, names in original)
+    try:
+        result = CliRunner().invoke(cli, ["--help"])
+    finally:
+        AuditGroup.sections = original
+    assert result.exit_code == 0, result.output
+    assert "Other:" in result.output
+    assert "render" in result.output
+
+
+def test_version_option_uses_package_version() -> None:
+    import auditctl
+
+    result = CliRunner().invoke(cli, ["--version"])
+    assert result.exit_code == 0
+    assert auditctl.__version__ in result.output
+
+
 def test_add_rejects_invalid_metadata(repo_root: Path) -> None:
     result = CliRunner().invoke(
         cli,
@@ -175,3 +262,26 @@ def test_add_refuses_an_artifacts_root_that_disagrees_with_the_index(
     assert result.exit_code != 0
     assert "does not agree with the resolved repository" in result.output
     assert "index-only" in result.output
+
+
+def test_status_fresh_clone_points_at_a_rebuild_that_runs(repo_root: Path) -> None:
+    runner = CliRunner()
+    added = runner.invoke(
+        cli, ["add", "--type", "decision", "--actor", "tester", "--summary", "Committed"]
+    )
+    assert added.exit_code == 0, added.output
+    ledger = Path(json.loads(runner.invoke(cli, ["status", "--json"]).output)["context"]["ledger_path"])
+    ledger.unlink()
+
+    payload = json.loads(runner.invoke(cli, ["status", "--json"]).output)
+    assert payload["needs_you"] == ["no sqlite index for 1 shard event(s)"]
+    assert not ledger.exists()
+    result = runner.invoke(cli, ["status"])
+    assert result.exit_code == 0, result.output
+    assert "▲ no sqlite index for 1 shard event(s)" in result.output
+    assert "No ledger yet." not in result.output
+    assert not ledger.exists()
+
+    step = payload["next"][0].split(" ", 1)[1]
+    rebuilt = runner.invoke(cli, shlex.split(step))
+    assert rebuilt.exit_code == 0, rebuilt.output
