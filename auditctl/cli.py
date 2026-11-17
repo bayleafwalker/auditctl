@@ -4,8 +4,8 @@ import json
 import hashlib
 import os
 import shutil
-import sys
-from datetime import datetime, timezone
+from difflib import get_close_matches
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import click
@@ -38,6 +38,41 @@ def _open_db():
     return paths, conn
 
 
+def _context_description(paths) -> str:
+    cwd = Path.cwd().resolve()
+    repo_root = paths.repo_root.resolve()
+    if paths.source == "explicit-db":
+        resolution = "env: AUDITCTL_DB"
+    elif paths.source == "worktree-main":
+        resolution = "worktree-main"
+    elif cwd == repo_root:
+        resolution = f"repo marker ({paths.source})"
+    else:
+        resolution = f"parent-walk from {cwd} ({paths.source})"
+    return f"context: repo {paths.repo_id} · ledger {paths.db_path} · resolved via {resolution}"
+
+
+def _relative_age(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s ago"
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+    if seconds < 86400:
+        return f"{seconds // 3600}h ago"
+    return f"{seconds // 86400}d ago"
+
+
+class AuditNotFound(click.ClickException):
+    exit_code = 3
+
+    def show(self, file=None) -> None:
+        if file is None:
+            file = click.get_text_stream("stderr")
+        click.echo(f"error: {self.format_message()}", file=file)
+        click.echo("  fix: auditctl status", file=file)
+
+
 def _reconcile_shards_before_allocation(conn, shard_dir: Path) -> None:
     """Recover an NDJSON-ahead crash while holding the SQLite writer lock."""
     conn.execute("BEGIN IMMEDIATE")
@@ -52,12 +87,182 @@ def _reconcile_shards_before_allocation(conn, shard_dir: Path) -> None:
         raise
 
 
-@click.group()
+class AuditGroup(click.Group):
+    """Click group with a task-oriented command map."""
+
+    sections = (
+        ("Start here", ("status",)),
+        ("Daily", ("add",)),
+        ("Inspect", ("list", "render")),
+        ("Maintain", ("rebuild",)),
+        ("Plumbing", ("semantic-replay", "source-preflight")),
+    )
+
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        commands = {name: self.get_command(ctx, name) for name in self.list_commands(ctx)}
+        width = max((len(name) for name, command in commands.items() if command), default=0)
+        for heading, names in self.sections:
+            rows = [
+                (name, commands[name].get_short_help_str())
+                for name in names
+                if name in commands and commands[name] is not None
+            ]
+            if rows:
+                with formatter.section(heading):
+                    formatter.write_dl(rows, col_max=width)
+
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        super().format_help(ctx, formatter)
+        formatter.write_paragraph()
+        formatter.write(
+            "Examples:\n"
+            "  auditctl status\n"
+            "  auditctl list --limit 10\n"
+            "  auditctl add --type decision --actor you --summary \"Chose an approach\"\n"
+            "Run `auditctl <command> --help` for command options.\n"
+        )
+
+    def resolve_command(self, ctx: click.Context, args: list[str]):
+        if args and self.get_command(ctx, args[0]) is None:
+            suggestion = get_close_matches(args[0], self.list_commands(ctx), n=1, cutoff=0.55)
+            if suggestion:
+                raise click.UsageError(
+                    f"unknown command '{args[0]}'; did you mean {suggestion[0]}?", ctx
+                )
+        return super().resolve_command(ctx, args)
+
+
+@click.group(
+    cls=AuditGroup,
+    invoke_without_command=True,
+    no_args_is_help=False,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+@click.version_option(version="0.1.9", prog_name="auditctl")
 def cli() -> None:
-    """Repo-local audit ledger."""
+    """Repo-local audit ledger for this repository."""
+    if click.get_current_context().invoked_subcommand is None:
+        click.echo(click.get_current_context().get_help())
 
 
-@cli.command("source-preflight")
+@cli.command("status", short_help="Summarize this audit ledger")
+@click.option("--json", "output_json", is_flag=True, help="Emit a versioned JSON object")
+def status_cmd(output_json: bool) -> None:
+    """Show the resolved ledger, recent activity and next commands."""
+    try:
+        context = resolve_audit_context()
+        conn = db.connect(context.index_path)
+        db.init_db(conn)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    now = datetime.now(timezone.utc)
+    now_text = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    since_24h = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    since_7d = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        counts = conn.execute(
+            """SELECT type,
+                      SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS last_24h,
+                      SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS last_7d
+               FROM audit_event GROUP BY type ORDER BY type""",
+            (since_24h, since_7d),
+        ).fetchall()
+        total = int(conn.execute("SELECT COUNT(*) FROM audit_event").fetchone()[0])
+        newest = conn.execute("SELECT MAX(ts) FROM audit_event").fetchone()[0]
+    finally:
+        conn.close()
+
+    shard_dir = context.artifacts_root / "_artifacts" / context.repo_id / "audit"
+    shard_files = sorted(shard_dir.glob("events-*.ndjson")) if shard_dir.exists() else []
+    shard_bytes = sum(path.stat().st_size for path in shard_files)
+    shard_count: int | None = None
+    if shard_bytes <= 8 * 1024 * 1024:
+        try:
+            shard_count = sum(
+                sum(1 for _ in path.open("rb")) for path in shard_files
+            )
+        except OSError:
+            shard_count = None
+
+    if output_json:
+        payload = {
+            "schema": "auditctl.status/v1",
+            "context": {
+                "repo_id": context.repo_id,
+                "repo_root": str(context.repo_root),
+                "ledger_path": str(context.index_path),
+                "artifacts_root": str(context.artifacts_root),
+                "resolution": context.resolution_source,
+            },
+            "counts": {
+                "last_24h": {row["type"]: row["last_24h"] for row in counts},
+                "last_7d": {row["type"]: row["last_7d"] for row in counts},
+            },
+            "newest_event": (
+                {
+                    "ts": newest,
+                    "age_seconds": max(
+                        0,
+                        int(
+                            (
+                                now
+                                - datetime.strptime(newest, "%Y-%m-%dT%H:%M:%SZ").replace(
+                                    tzinfo=timezone.utc
+                                )
+                            ).total_seconds()
+                        ),
+                    ),
+                }
+                if newest
+                else None
+            ),
+            "drift": {
+                "check": "line-count",
+                "sqlite_events": total,
+                "shard_events": shard_count,
+                "state": (
+                    "unknown"
+                    if shard_count is None
+                    else ("matched" if shard_count == total else "mismatch")
+                ),
+            },
+            "generated_at": now_text,
+            "next": ["auditctl list --limit 10", "auditctl add --help"],
+        }
+        click.echo(json.dumps(payload, sort_keys=True))
+        return
+
+    paths = resolve_paths()
+    click.echo(_context_description(paths))
+    click.echo("Nothing needs you.")
+    click.echo("In flight: none")
+    if counts:
+        click.echo("events by type (24h / 7d):")
+        width = max(len(row["type"]) for row in counts)
+        for row in counts:
+            click.echo(f"  {row['type']:<{width}}  {row['last_24h']:>5} / {row['last_7d']:>5}")
+    else:
+        click.echo("events by type (24h / 7d): none")
+    if newest:
+        newest_age = (
+            now
+            - datetime.strptime(newest, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        ).total_seconds()
+        click.echo(f"newest event: {_relative_age(newest_age)} ({newest})")
+    else:
+        click.echo("newest event: none")
+    if shard_count is None:
+        click.echo(f"shard/sqlite: check skipped ({len(shard_files)} shard(s), {shard_bytes} bytes)")
+    else:
+        state = "matched" if shard_count == total else f"drift: sqlite={total}, shards={shard_count}"
+        click.echo(f"shard/sqlite line count: {state}")
+    click.echo(f"events: {total}")
+    click.echo("next: auditctl list --limit 10")
+    click.echo("next: auditctl add --help")
+
+
+@cli.command("source-preflight", short_help="Qualify a frozen source manifest")
 @click.option(
     "--manifest",
     "manifest_path",
@@ -191,7 +396,7 @@ def _record_event(
         conn.close()
 
 
-@cli.command("add")
+@cli.command("add", short_help="Record an audit event (writes the ledger)")
 @click.option("--type", "type_", required=True, help="Audit event type")
 @click.option("--actor", required=True, help="Actor responsible for the event")
 @click.option("--summary", required=True, help="One-line event summary")
@@ -246,7 +451,7 @@ def add_cmd(type_, actor, summary, detail, refs, source, metadata, ts, output_js
         click.echo(f"Added {event['id']} {event['type']} {event['source']} {event['ts']}")
 
 
-@cli.command("semantic-replay")
+@cli.command("semantic-replay", short_help="Verify and record a semantic result")
 @click.option(
     "--manifest",
     "manifest_path",
@@ -315,13 +520,19 @@ def semantic_replay_cmd(
     )
 
 
-@cli.command("list")
+@cli.command("list", short_help="List audit events newest first")
 @click.option("--type", "type_", default=None, help="Filter by event type")
 @click.option("--source", default=None, help="Filter by source")
 @click.option("--since", default=None, help="Inclusive ISO UTC lower bound")
 @click.option("--until", default=None, help="Inclusive ISO UTC upper bound")
-@click.option("--limit", type=int, default=50, show_default=True)
-@click.option("--json", "output_json", is_flag=True, default=False)
+@click.option("--limit", type=int, default=50, show_default=True, help="Maximum events to return")
+@click.option(
+    "--json",
+    "output_json",
+    is_flag=True,
+    default=False,
+    help="Emit the existing event-array JSON format",
+)
 @click.option("--attribution-overlay", type=click.Path(path_type=Path), multiple=True,
               help="Explicit verified attribution overlay; repeat for protected tails")
 @click.option("--attribution-source", multiple=True, metavar="SOURCE_ID=PATH",
@@ -329,7 +540,7 @@ def semantic_replay_cmd(
 @click.option("--attributed-repo", default=None, help="Filter explicitly mapped repository in snapshot mode")
 def list_cmd(type_, source, since, until, limit, output_json, attribution_overlay,
              attribution_source, attributed_repo) -> None:
-    """List audit events newest first."""
+    """List audit events newest first; --type accepts a full event type."""
     if attribution_overlay or attribution_source or attributed_repo is not None:
         from .attribution_listing import AttributionListingError, list_snapshots
 
@@ -352,7 +563,7 @@ def list_cmd(type_, source, since, until, limit, output_json, attribution_overla
             validate_timestamp(since)
         if until:
             validate_timestamp(until)
-        _, conn = _open_db()
+        paths, conn = _open_db()
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     try:
@@ -362,24 +573,39 @@ def list_cmd(type_, source, since, until, limit, output_json, attribution_overla
     if output_json:
         click.echo(json.dumps(events, sort_keys=True))
         return
+    click.echo(_context_description(paths))
     if not events:
+        if type_ is not None:
+            raise AuditNotFound(
+                f"no audit events found for type {type_!r}; run `auditctl status` to see recent types"
+            )
         click.echo("No audit events found.")
         return
-    click.echo(f"{'TS':20}  {'ID':29}  {'TYPE':14}  {'SOURCE':12}  {'ACTOR':12}  SUMMARY")
+    type_width = max(len("TYPE"), *(len(str(event["type"])) for event in events))
+    source_width = max(len("SOURCE"), *(len(str(event["source"])) for event in events))
+    actor_width = max(len("ACTOR"), *(len(str(event["actor"])) for event in events))
+    click.echo(f"{'TS':20}  {'ID':29}  {'TYPE':{type_width}}  {'SOURCE':{source_width}}  {'ACTOR':{actor_width}}  SUMMARY")
     for event in events:
         click.echo(
-            f"{event['ts']:20}  {event['id']:29}  {event['type'][:14]:14}  "
-            f"{event['source'][:12]:12}  {event['actor'][:12]:12}  {event['summary']}"
+            f"{event['ts']:20}  {event['id']:29}  {event['type']:{type_width}}  "
+            f"{event['source']:{source_width}}  {event['actor']:{actor_width}}  {event['summary']}"
         )
 
 
-@cli.command("render")
-@click.option("--since", default=None)
-@click.option("--until", default=None)
-@click.option("--type", "type_", default=None)
-@click.option("--source", default=None)
-@click.option("--format", "format_", type=click.Choice(["text", "ndjson"]), default="text", show_default=True)
-@click.option("--limit", type=int, default=None)
+@cli.command("render", short_help="Render audit events chronologically")
+@click.option("--since", default=None, help="Inclusive ISO UTC lower bound")
+@click.option("--until", default=None, help="Inclusive ISO UTC upper bound")
+@click.option("--type", "type_", default=None, help="Filter by full event type")
+@click.option("--source", default=None, help="Filter by publisher source")
+@click.option(
+    "--format",
+    "format_",
+    type=click.Choice(["text", "ndjson"]),
+    default="text",
+    show_default=True,
+    help="Rendered output format",
+)
+@click.option("--limit", type=int, default=None, help="Maximum events to render")
 def render_cmd(since, until, type_, source, format_, limit) -> None:
     """Render audit events chronologically."""
     try:
@@ -429,7 +655,7 @@ def _index_only_message(index_only, *, shard_count: int, shard_events: int) -> s
     )
 
 
-@cli.command("rebuild")
+@cli.command("rebuild", short_help="Rebuild sqlite from NDJSON shards")
 @click.option("--from-ndjson", "from_ndjson", required=True, help="Shard file, directory, or glob")
 @click.option("--replace", is_flag=True, default=False, help="Replace current sqlite db after creating a backup")
 @click.option("--dry-run", is_flag=True, default=False, help="Validate only")
