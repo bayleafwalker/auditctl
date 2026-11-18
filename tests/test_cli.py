@@ -19,7 +19,7 @@ def test_help_is_grouped_and_versioned() -> None:
     assert "Examples:" in help_result.output
     version_result = runner.invoke(cli, ["--version"])
     assert version_result.exit_code == 0
-    assert "0.1.9" in version_result.output
+    assert "0.2.0" in version_result.output
 
 
 def test_add_list_and_render_json(repo_root: Path, tmp_path: Path) -> None:

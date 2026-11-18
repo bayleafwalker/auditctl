@@ -1,0 +1,44 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "auditctl.central-observation-ingest",
+  "contract_ref": {
+    "doc_id": "auditctl-vuoro-served-audit-alignment",
+    "revision": "git:0751c6a77cacc5a2dd016705a5d2e9756a3216f2"
+  },
+  "implementation_sha": "sha256:central-implementation-v1:b215434cafc87f2c98bc6f068c7445350260041e4301708a12dfb84ce0800b3f",
+  "depth": 2,
+  "environment": {
+    "backend": "disposable-local-postgresql",
+    "isolation": "Existing PostgreSQL READ COMMITTED owner transactions with event advisory locks and origin-stream row locks; fixture creates and removes isolated temporary cluster",
+    "tool_versions": {
+      "postgresql": "18.7",
+      "python": "3.12.14",
+      "pytest": "9.1.1"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "kind": "re-verification-of-a-changed-implementation",
+    "suite": "PATH=/nix/store/0azp22fcrwvhv8liw9hxg4hlwf0sk2qk-postgresql-18.7/bin:$PATH uv run --frozen pytest -q --ignore=tests/test_attribution_listing.py",
+    "passed": 267,
+    "failed": 0,
+    "counterexamples_found": 0
+  },
+  "claims": [
+    {
+      "property": "The operator-interface redesign source and the existing disposable PostgreSQL owner tests pass against auditctl 0.2.0 release metadata",
+      "result": "example-tested",
+      "evidence": [
+        "2026-11-18: actual command uv run --frozen pytest -q --ignore=tests/test_attribution_listing.py with PostgreSQL 18.7 binaries on PATH, run after this packet was added: see execution.passed; 1 legitimate skip (release wheel is built by the release workflow); no prior packet rewritten",
+        "The digest covers central source/migration/schema files plus the version and immutable kit dependency in pyproject.toml; the 0.1.9 to 0.2.0 change alters the version literal only, with no owner handler, migration or grant changes."
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Commissioned as the auditctl 0.2.0 release preparation, shipping the merged operator-interface redesign (PR #35); not acceptance or resource-authority qualification.",
+    "Earlier results remain observations of their original trees; no existing packet was edited.",
+    "The first release-workflow run for tag auditctl-v0.2.0 failed on this missing packet and on a stale 0.1.9 literal in tests/test_cli.py; both were repaired and the tag was re-cut.",
+    "tests/test_attribution_listing.py was excluded locally only because it needs the AUDITCTL_TEST_ATTRIBUTION_QUERY agentops-query script that the release workflow checks out."
+  ]
+}
